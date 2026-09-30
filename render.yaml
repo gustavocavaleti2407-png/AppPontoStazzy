@@ -1,0 +1,20 @@
+# Blueprint do Render: cria o serviço web gratuito. O banco fica no Neon (DATABASE_URL).
+services:
+  - type: web
+    name: stazzy-ponto
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: TZ
+        value: America/Sao_Paulo
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_LOGIN
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false

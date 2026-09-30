@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#b29df8">
+  <title>Stazzy Ponto</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@600&family=Nunito:wght@400;600;700;800&display=swap">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Login -->
+  <section id="login-view" class="center hidden">
+    <form id="login-form" class="card narrow login-card">
+      <div class="brand brand-lg" role="img" aria-label="Stazzy"><span class="c1">S</span><span class="c2">ta</span><span class="c3">z</span><span class="c1">zy</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z" fill="none" stroke="#ffda67" stroke-width="2" stroke-linejoin="round"/></svg></div>
+      <p class="login-sub">Registro de ponto</p>
+      <label>Login<input name="login" autocomplete="username" autocapitalize="none" required></label>
+      <label>Senha<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary">Entrar</button>
+      <p class="error" id="login-error"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app-view" class="hidden">
+    <header class="topbar">
+      <span class="brand brand-sm" role="img" aria-label="Stazzy"><span class="c1">S</span><span class="c2">ta</span><span class="c3">z</span><span class="c1">zy</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2.9 6.6 7.1.6-5.4 4.7 1.6 7-6.2-3.7-6.2 3.7 1.6-7L2 9.2l7.1-.6z" fill="none" stroke="#ffda67" stroke-width="2" stroke-linejoin="round"/></svg></span>
+      <span class="who" id="who"></span>
+      <nav id="tabs"></nav>
+      <button class="link" id="logout">Sair</button>
+    </header>
+    <main>
+
+      <!-- Funcionário: bater ponto -->
+      <section data-tab="ponto" class="tab">
+        <div class="card punch-card">
+          <div id="clock" class="clock">--:--:--</div>
+          <div id="date" class="muted"></div>
+          <button id="punch-btn" class="punch">Registrar ponto</button>
+          <p id="punch-msg" class="muted"></p>
+        </div>
+        <div class="card">
+          <h2>Hoje</h2>
+          <div id="today-punches" class="chips"></div>
+          <div id="today-summary" class="stats"></div>
+          <ul id="today-alerts" class="alerts"></ul>
+        </div>
+      </section>
+
+      <!-- Espelho (funcionário vê o próprio; admin escolhe) -->
+      <section data-tab="espelho" class="tab">
+        <div class="card">
+          <h2>Espelho de ponto</h2>
+          <div class="filters">
+            <label id="emp-filter-wrap" class="hidden">Funcionário<select id="emp-filter"></select></label>
+            <label>De<input type="date" id="from"></label>
+            <label>Até<input type="date" id="to"></label>
+            <button id="load-report">Ver</button>
+            <button id="pdf-btn">PDF</button>
+            <button id="xlsx-btn">Excel</button>
+          </div>
+          <div id="report"></div>
+        </div>
+      </section>
+
+      <!-- Admin: painel do dia -->
+      <section data-tab="painel" class="tab">
+        <div class="card">
+          <h2>Hoje na empresa</h2>
+          <div id="panel"></div>
+        </div>
+      </section>
+
+      <!-- Admin: funcionários -->
+      <section data-tab="funcionarios" class="tab">
+        <div class="card">
+          <h2>Funcionários</h2>
+          <div id="employees"></div>
+          <button id="new-emp" class="primary">Novo funcionário</button>
+        </div>
+      </section>
+
+      <!-- Admin: configurações -->
+      <section data-tab="config" class="tab">
+        <div class="card">
+          <h2>Regras e configurações</h2>
+          <form id="settings-form" class="grid-form"></form>
+        </div>
+        <div class="card">
+          <h2>Feriados</h2>
+          <form id="holiday-form" class="filters">
+            <label>Data<input type="date" name="day" required></label>
+            <label>Nome<input name="name" required></label>
+            <button>Adicionar</button>
+          </form>
+          <ul id="holidays" class="list"></ul>
+        </div>
+        <div class="card">
+          <h2>Histórico de ajustes</h2>
+          <div id="audit"></div>
+        </div>
+      </section>
+
+      <!-- Todos: conta -->
+      <section data-tab="conta" class="tab">
+        <form id="pass-form" class="card narrow">
+          <h2>Trocar senha</h2>
+          <label>Senha atual<input type="password" name="current" required></label>
+          <label>Nova senha<input type="password" name="next" minlength="6" required></label>
+          <button class="primary">Salvar</button>
+          <p id="pass-msg" class="muted"></p>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="dialog"><form method="dialog" id="dialog-form"></form></dialog>
+  <script src="app.js"></script>
+</body>
+</html>
