@@ -17,6 +17,8 @@ Tempo estimado: 15 minutos. Você vai precisar só da sua conta do GitHub.
 6. Na página do projeto, clique no botão **Connect** (canto superior direito do painel).
 7. Na janela que abrir, deixe as opções como estão e copie a **connection string**. Ela é parecida com:
    `postgresql://neondb_owner:XXXXXXXX@ep-algo-123456.sa-east-1.aws.neon.tech/neondb?sslmode=require`
+   - Se aparecer um botão **Show password**, clique nele antes de copiar, para a senha vir junto.
+   - Se o texto vier com `psql '...'` em volta, copie só a parte que começa em `postgresql://` e termina antes da aspa.
 8. Guarde esse texto num bloco de notas por alguns minutos. **Não mande para ninguém nem cole na conversa**: ele é a senha do seu banco.
 
 Pronto, o banco está criado. As tabelas são criadas sozinhas quando o app rodar pela primeira vez.
