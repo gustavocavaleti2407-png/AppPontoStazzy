@@ -98,3 +98,8 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .login-card label { text-align: left; }
 .login-sub { color: var(--muted); margin: 0 0 18px; }
 .topbar .who { color: var(--muted); font-size: .9rem; }
+
+.role-employee .admin-only, .role-admin .employee-only { display: none !important; }
+.two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.badge.warn { background: var(--tint-amarelo); }
+.badge.ok { background: var(--tint-turquesa); }

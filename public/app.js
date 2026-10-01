@@ -43,19 +43,35 @@ $('#logout').addEventListener('click', async () => { await api('/api/logout', { 
 // ---------- navegação ----------
 function tabsFor(role) {
   return role === 'admin'
-    ? [['painel', 'Painel'], ['espelho', 'Relatórios'], ['funcionarios', 'Funcionários'], ['config', 'Configurações'], ['conta', 'Conta']]
-    : [['ponto', 'Bater ponto'], ['espelho', 'Meu espelho'], ['conta', 'Conta']];
+    ? [['painel', 'Painel'], ['espelho', 'Relatórios'], ['ocorrencias', 'Ocorrências'], ['solicitacoes', 'Solicitações'],
+      ['jornadas', 'Jornadas especiais'], ['funcionarios', 'Funcionários'], ['config', 'Configurações'], ['conta', 'Conta']]
+    : [['ponto', 'Bater ponto'], ['espelho', 'Meu espelho'], ['ocorrencias', 'Ocorrências'], ['solicitacoes', 'Correções'], ['conta', 'Conta']];
 }
 
 function openTab(name) {
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('hidden', s.dataset.tab !== name));
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  ({ ponto: loadToday, espelho: loadReport, painel: loadPanel, funcionarios: loadEmployees, config: loadConfig }[name] || (() => {}))();
+  ({ ponto: loadToday, espelho: loadReport, painel: loadPanel, funcionarios: loadEmployees, config: loadConfig,
+    ocorrencias: loadOccurrences, solicitacoes: loadCorrections, jornadas: loadExceptions }[name] || (() => {}))();
 }
 
 function refreshEmpFilter() {
-  $('#emp-filter').innerHTML = '<option value="all">Todos</option>' +
-    employees.filter(e => e.role === 'employee' && e.active).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  const opts = employees.filter(e => e.role === 'employee' && e.active).map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  $('#emp-filter').innerHTML = '<option value="all">Todos</option>' + opts;
+  $('#occ-emp').innerHTML = '<option value="all">Todos</option>' + opts;
+  $('#exc-emp').innerHTML = '<option value="all">Todos os funcionários</option>' + opts;
+}
+
+function addDays(day, n) {
+  const d = new Date(`${day}T12:00:00`); d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+async function refreshPendingBadge() {
+  if (me.role !== 'admin') return;
+  const pend = await api('/api/corrections?status=pendente').catch(() => []);
+  const b = document.querySelector('#tabs button[data-tab="solicitacoes"]');
+  if (b) b.textContent = pend.length ? `Solicitações (${pend.length})` : 'Solicitações';
 }
 
 async function start() {
@@ -65,22 +81,29 @@ async function start() {
   const tabs = tabsFor(me.role);
   $('#tabs').innerHTML = tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('');
   $('#tabs').querySelectorAll('button').forEach(b => b.addEventListener('click', () => openTab(b.dataset.tab)));
-  $('#from').value = today().slice(0, 8) + '01';
-  $('#to').value = today();
+  document.body.classList.toggle('role-admin', me.role === 'admin');
+  document.body.classList.toggle('role-employee', me.role !== 'admin');
+  $('#from').value = $('#occ-from').value = today().slice(0, 8) + '01';
+  $('#to').value = $('#occ-to').value = today();
+  $('#exc-from').value = today().slice(0, 8) + '01';
+  $('#exc-to').value = addDays(today(), 60);
   if (me.role === 'admin') {
     employees = await api('/api/employees');
     $('#emp-filter-wrap').classList.remove('hidden');
     refreshEmpFilter();
+    refreshPendingBadge();
   }
   openTab(tabs[0][0]);
 }
 
 // ---------- bater ponto ----------
-setInterval(() => {
+function tick() {
   const d = new Date();
   $('#clock').textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   $('#date').textContent = d.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });
-}, 1000);
+}
+tick();
+setInterval(tick, 1000);
 
 function stat(label, value) { return `<div class="stat"><b>${value}</b><span>${label}</span></div>`; }
 
@@ -91,8 +114,11 @@ async function loadToday() {
   $('#today-punches').innerHTML = d.punches.length
     ? d.punches.map((p, i) => `<span class="chip">${labels[i] || (i % 2 ? 'Saída' : 'Entrada')}: ${p.time}</span>`).join('')
     : '<span class="muted">Nenhuma marcação hoje.</span>';
+  const sched = d.scheduleStart ? `Jornada de hoje: ${d.scheduleStart} às ${d.scheduleEnd}` : 'Hoje não há jornada prevista';
+  $('#today-schedule').textContent = sched + (d.special ? ` (${d.special})` : '');
   $('#today-summary').innerHTML = stat('Trabalhado', hhmm(d.worked)) + stat('Previsto', hhmm(d.expected)) +
-    stat('Intervalo', hhmm(d.breakTotal)) + stat('Hora extra', hhmm(d.overtime50 + d.overtime100));
+    stat('Intervalo', hhmm(d.breakTotal)) + stat('Hora extra', hhmm(d.overtime50 + d.overtime100)) +
+    (d.late ? stat('Atraso', hhmm(d.late)) : '');
   $('#today-alerts').innerHTML = d.alerts.map(a => `<li>${esc(a)}</li>`).join('');
   const next = labels[d.punches.length] || (d.punches.length % 2 ? 'Saída' : 'Entrada');
   $('#punch-btn').textContent = `Registrar ${next.toLowerCase()}`;
@@ -128,25 +154,39 @@ async function loadReport() {
       const punches = d.punches.map(p =>
         admin ? `<span class="punch-edit" data-id="${p.id}" data-day="${d.day}" data-time="${p.time}" data-emp="${r.employee.id}" title="${esc(p.source)}">${p.time}</span>`
               : `<span title="${esc(p.source)}">${p.time}</span> `).join('');
-      const add = admin ? ` <button class="link add-punch" data-day="${d.day}" data-emp="${r.employee.id}">+</button>` : '';
-      const notes = [d.holiday ? `Feriado: ${d.holiday}` : '', ...d.alerts].filter(Boolean).map(esc).join('<br>');
+      const add = admin ? ` <button class="link add-punch" data-day="${d.day}" data-emp="${r.employee.id}">+</button>`
+        : ` <button class="link fix-day" data-day="${d.day}">Corrigir</button>`;
+      const notes = dayNotes(d);
       return `<tr class="${cls}"><td class="num">${br(d.day)}</td><td>${d.weekday}</td><td class="num">${punches}${add}</td>
         <td class="num">${t(d.expected)}</td><td class="num">${t(d.worked)}</td><td class="num">${t(d.breakTotal)}</td>
         <td class="num">${t(d.overtime50)}</td><td class="num">${t(d.overtime100)}</td><td class="num">${t(d.deficit)}</td>
-        <td class="num">${t(d.night)}</td><td>${notes}</td></tr>`;
+        <td class="num">${t(d.late)}</td><td class="num">${t(d.night)}</td><td>${notes}</td></tr>`;
     }).join('');
     return `<h2>${esc(r.employee.name)}</h2>
       <div class="stats">${stat('Trabalhado', hhmm(T.worked))}${stat('Previsto', hhmm(T.expected))}
         ${stat(`HE ${r.rates.weekday}%`, hhmm(T.overtime50))}${stat(`HE ${r.rates.sunday}%`, hhmm(T.overtime100))}
         ${stat('Débito', hhmm(T.deficit))}${stat('Saldo', hhmm(T.balance))}${stat('Noturno', hhmm(T.night))}
-        ${stat('Faltas', T.absences)}</div>
+        ${stat('Atrasos', `${hhmm(T.late)} (${T.lateDays} dia${T.lateDays === 1 ? '' : 's'})`)}${stat('Faltas', T.absences)}</div>
       <div class="table-wrap"><table><thead><tr><th>Data</th><th>Dia</th><th>Marcações</th><th>Previsto</th><th>Trab.</th>
-        <th>Interv.</th><th>HE 50%</th><th>HE 100%</th><th>Débito</th><th>Noturno</th><th>Ocorrências</th></tr></thead>
+        <th>Interv.</th><th>HE 50%</th><th>HE 100%</th><th>Débito</th><th>Atraso</th><th>Noturno</th><th>Ocorrências</th></tr></thead>
         <tbody>${rows}</tbody></table></div><br>`;
   }).join('') || '<p class="muted">Nenhum funcionário cadastrado.</p>';
 
   document.querySelectorAll('.punch-edit').forEach(el => el.addEventListener('click', () => editPunch(el.dataset)));
   document.querySelectorAll('.add-punch').forEach(el => el.addEventListener('click', () => addPunch(el.dataset)));
+  const byDay = {};
+  if (!admin && reports[0]) for (const d of reports[0].days) byDay[d.day] = d;
+  document.querySelectorAll('.fix-day').forEach(el => el.addEventListener('click', () => correctionForm(byDay[el.dataset.day])));
+}
+
+function noteText(n) { return `${n.kind}${n.excused ? ' (abonado)' : ''}${n.note ? `: ${n.note}` : ''}`; }
+
+function dayNotes(d) {
+  return [
+    d.holiday ? `Feriado: ${d.holiday}` : '',
+    d.special ? `Jornada especial: ${d.special}${d.scheduleStart ? ` (${d.scheduleStart}–${d.scheduleEnd})` : ''}` : '',
+    ...d.alerts, ...(d.notes || []).map(noteText),
+  ].filter(Boolean).map(esc).join('<br>');
 }
 
 $('#load-report').addEventListener('click', loadReport);
@@ -208,7 +248,7 @@ async function loadEmployees() {
   $('#employees').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th>
     <th>Jornada</th><th>Dias</th><th>Situação</th><th></th></tr></thead><tbody>${employees.map(e => `<tr>
     <td>${esc(e.name)}</td><td>${esc(e.login)}</td><td>${e.role === 'admin' ? 'Admin' : 'Funcionário'}</td>
-    <td class="num">${hhmm(e.daily_minutes)}</td><td>${e.work_days.split(',').map(d => DAYS[d]).join(' ')}</td>
+    <td class="num">${e.start_time}–${e.end_time}${e.break_minutes ? ` (interv. ${e.break_minutes} min)` : ''}</td><td>${e.work_days.split(',').map(d => DAYS[d]).join(' ')}</td>
     <td>${e.active ? 'Ativo' : 'Inativo'}</td><td><button class="link" data-edit="${e.id}">Editar</button></td></tr>`).join('')}
     </tbody></table></div><br>`;
   document.querySelectorAll('[data-edit]').forEach(b =>
@@ -217,24 +257,28 @@ async function loadEmployees() {
 
 function employeeForm(e) {
   const isNew = !e;
-  e = e || { name: '', login: '', role: 'employee', daily_minutes: 480, work_days: '1,2,3,4,5', saturday_minutes: 240, active: true };
+  e = e || { name: '', login: '', role: 'employee', work_days: '1,2,3,4,5', start_time: '08:00', end_time: '17:00',
+    break_minutes: 60, sat_start: '08:00', sat_end: '12:00', active: true };
   const wd = e.work_days.split(',');
   dialog(`<h2>${isNew ? 'Novo funcionário' : 'Editar funcionário'}</h2>
     <label>Nome<input name="name" value="${esc(e.name)}" required></label>
     <label>Login<input name="login" value="${esc(e.login)}" ${isNew ? 'required' : 'disabled'} autocapitalize="none"></label>
     <label>${isNew ? 'Senha' : 'Nova senha (deixe vazio para manter)'}<input name="password" type="password" minlength="6" ${isNew ? 'required' : ''}></label>
     <label>Perfil<select name="role"><option value="employee">Funcionário</option><option value="admin" ${e.role === 'admin' ? 'selected' : ''}>Administrador</option></select></label>
-    <label>Jornada diária (horas)<input name="daily" type="time" value="${hhmm(e.daily_minutes)}" required></label>
+    <div class="two-cols"><label>Entrada padrão<input name="start_time" type="time" value="${e.start_time}" required></label>
+      <label>Saída padrão<input name="end_time" type="time" value="${e.end_time}" required></label></div>
+    <label>Intervalo previsto (min)<input name="break_minutes" type="number" min="0" max="240" value="${e.break_minutes}" required></label>
     <label>Dias de trabalho<span class="days-check">${DAYS.map((d, i) =>
       `<label><input type="checkbox" name="wd" value="${i}" ${wd.includes(String(i)) ? 'checked' : ''}>${d}</label>`).join('')}</span></label>
-    <label>Jornada no sábado (se trabalhar)<input name="sat" type="time" value="${hhmm(e.saturday_minutes)}"></label>
+    <div class="two-cols"><label>Entrada no sábado<input name="sat_start" type="time" value="${e.sat_start}"></label>
+      <label>Saída no sábado<input name="sat_end" type="time" value="${e.sat_end}"></label></div>
     ${isNew ? '' : `<label><span><input type="checkbox" name="active" ${e.active ? 'checked' : ''}> Ativo</span></label>`}
     <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button><button value="save" class="primary">Salvar</button></div>`,
   async f => {
-    const toMin = v => { const [h, m] = String(v || '0:0').split(':').map(Number); return h * 60 + m; };
     const body = {
-      name: f.get('name'), role: f.get('role'), daily_minutes: toMin(f.get('daily')),
-      saturday_minutes: toMin(f.get('sat')), work_days: f.getAll('wd').join(',') || '1,2,3,4,5',
+      name: f.get('name'), role: f.get('role'), work_days: f.getAll('wd').join(',') || '1,2,3,4,5',
+      start_time: f.get('start_time'), end_time: f.get('end_time'), break_minutes: Number(f.get('break_minutes') || 0),
+      sat_start: f.get('sat_start') || '08:00', sat_end: f.get('sat_end') || '12:00',
     };
     if (f.get('password')) body.password = f.get('password');
     if (isNew) { body.login = f.get('login'); await api('/api/employees', { method: 'POST', body }); }
@@ -249,6 +293,7 @@ $('#new-emp').addEventListener('click', () => employeeForm(null));
 const SETTING_LABELS = {
   company_name: ['Nome da empresa', 'text'],
   tolerance_daily: ['Tolerância diária (min) — art. 58 §1º', 'number'],
+  late_tolerance: ['Tolerância de atraso e saída antecipada (min)', 'number'],
   overtime_rate_weekday: ['Adicional de hora extra em dias normais (%)', 'number'],
   overtime_rate_sunday: ['Adicional em domingos e feriados (%)', 'number'],
   max_daily_overtime: ['Limite de hora extra por dia (min)', 'number'],
@@ -264,6 +309,11 @@ async function loadConfig() {
   $('#settings-form').innerHTML = Object.entries(SETTING_LABELS).map(([k, [l, type]]) =>
     `<label>${l}<input name="${k}" type="${type}" value="${esc(s[k])}" required></label>`).join('') +
     `<div class="full"><button class="primary">Salvar regras</button> <span id="settings-msg" class="muted"></span></div>`;
+  $('#email-form').notify_emails.value = s.notify_emails || '';
+  $('#email-form').email_from.value = s.email_from || '';
+  $('#email-status').textContent = s._email_ready ? 'Avisos por e-mail ativos.'
+    : !s._email_key ? 'Falta configurar a chave do Brevo (BREVO_API_KEY) no Render. Veja o passo a passo em PUBLICAR.md.'
+    : 'Preencha os e-mails acima para ativar os avisos.';
   const hs = await api('/api/holidays');
   $('#holidays').innerHTML = hs.map(h => `<li><span>${br(h.day)} — ${esc(h.name)}</span>
     <button class="link danger" data-hday="${h.day}">Remover</button></li>`).join('') || '<li class="muted">Nenhum feriado cadastrado.</li>';
@@ -290,6 +340,154 @@ $('#holiday-form').addEventListener('submit', async e => {
   await api('/api/holidays', { method: 'POST', body: { day: f.get('day'), name: f.get('name') } });
   e.target.reset(); loadConfig();
 });
+
+$('#email-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  try {
+    await api('/api/settings', { method: 'PUT', body: Object.fromEntries(new FormData(e.target)) });
+    $('#email-msg').textContent = 'Salvo.'; loadConfig();
+  } catch (err) { $('#email-msg').textContent = err.message; }
+});
+
+$('#email-test').addEventListener('click', async () => {
+  $('#email-msg').textContent = 'Enviando...';
+  try { await api('/api/settings/test-email', { method: 'POST' }); $('#email-msg').textContent = 'E-mail de teste enviado.'; }
+  catch (err) { $('#email-msg').textContent = err.message; }
+});
+
+// ---------- pedidos de correção ----------
+const ACTION_TEXT = { incluir: 'Incluir marcação', alterar: 'Alterar marcação', excluir: 'Excluir marcação' };
+
+function correctionForm(d) {
+  const opts = d.punches.map(p => `<option value="${p.id}">${p.time}</option>`).join('');
+  dialog(`<h2>Pedir correção de ${br(d.day)}</h2>
+    <p class="muted">Marcações do dia: ${d.punches.map(p => p.time).join(', ') || 'nenhuma'}</p>
+    <label>O que precisa corrigir?<select name="action" id="corr-action">
+      <option value="incluir">Incluir uma marcação que faltou</option>
+      ${d.punches.length ? '<option value="alterar">Alterar o horário de uma marcação</option><option value="excluir">Excluir uma marcação errada</option>' : ''}
+    </select></label>
+    <label id="corr-punch-wrap" class="hidden">Marcação<select name="punch_id">${opts}</select></label>
+    <label id="corr-time-wrap">Horário correto<input type="time" name="time"></label>
+    <label>Motivo<input name="reason" required placeholder="Ex.: esqueci de registrar a volta do almoço"></label>
+    <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button><button value="save" class="primary">Enviar para aprovação</button></div>`,
+  async f => {
+    await api('/api/corrections', { method: 'POST', body: {
+      day: d.day, action: f.get('action'), punch_id: f.get('punch_id'), time: f.get('time'), reason: f.get('reason') } });
+    openTab('solicitacoes');
+  });
+  const sync = () => {
+    const a = $('#corr-action').value;
+    $('#corr-punch-wrap').classList.toggle('hidden', a === 'incluir');
+    $('#corr-time-wrap').classList.toggle('hidden', a === 'excluir');
+  };
+  $('#corr-action').addEventListener('change', sync); sync();
+}
+
+function describeCorrection(c) {
+  if (c.action === 'incluir') return `Incluir ${c.time}`;
+  if (c.action === 'alterar') return `Alterar ${c.punch_time || '?'} para ${c.time}`;
+  return `Excluir ${c.punch_time || 'marcação'}`;
+}
+
+const STATUS_BADGE = { pendente: 'warn', aprovado: 'ok', recusado: '' };
+
+async function loadCorrections() {
+  const admin = me.role === 'admin';
+  const q = admin ? `?status=${$('#corr-status').value}` : '';
+  const rows = await api(`/api/corrections${q}`);
+  $('#corrections').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr>${admin ? '<th>Funcionário</th>' : ''}
+    <th>Dia</th><th>Pedido</th><th>Motivo</th><th>Situação</th><th></th></tr></thead><tbody>${rows.map(c => `<tr>
+    ${admin ? `<td>${esc(c.employee_name)}</td>` : ''}<td class="num">${br(c.day)}</td><td>${esc(describeCorrection(c))}</td>
+    <td>${esc(c.reason)}</td><td><span class="badge ${STATUS_BADGE[c.status]}">${c.status}</span>
+      ${c.review_note ? `<br><span class="muted">${esc(c.review_note)}</span>` : ''}</td>
+    <td>${c.status !== 'pendente' ? '' : admin
+      ? `<button class="link" data-approve="${c.id}">Aprovar</button> <button class="link danger" data-reject="${c.id}">Recusar</button>`
+      : `<button class="link danger" data-cancel="${c.id}">Cancelar</button>`}</td></tr>`).join('')}</tbody></table></div>`
+    : '<p class="muted">Nenhuma solicitação.</p>';
+  const review = (id, approve) => dialog(`<h2>${approve ? 'Aprovar' : 'Recusar'} pedido</h2>
+    <label>Observação (opcional)<input name="note"></label>
+    <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button>
+      <button value="ok" class="${approve ? 'primary' : 'danger'}">${approve ? 'Aprovar e aplicar' : 'Recusar'}</button></div>`,
+  async f => {
+    await api(`/api/corrections/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: { note: f.get('note') } });
+    loadCorrections(); refreshPendingBadge();
+  });
+  document.querySelectorAll('[data-approve]').forEach(b => b.addEventListener('click', () => review(b.dataset.approve, true)));
+  document.querySelectorAll('[data-reject]').forEach(b => b.addEventListener('click', () => review(b.dataset.reject, false)));
+  document.querySelectorAll('[data-cancel]').forEach(b => b.addEventListener('click', async () => {
+    await api(`/api/corrections/${b.dataset.cancel}`, { method: 'DELETE' }); loadCorrections();
+  }));
+}
+$('#corr-status').addEventListener('change', loadCorrections);
+
+// ---------- jornadas especiais ----------
+async function loadExceptions() {
+  const rows = await api(`/api/exceptions?from=${$('#exc-from').value}&to=${$('#exc-to').value}`);
+  $('#exceptions').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Funcionário</th>
+    <th>Jornada</th><th>Motivo</th><th></th></tr></thead><tbody>${rows.map(x => `<tr><td class="num">${br(x.day)}</td>
+    <td>${x.employee_name ? esc(x.employee_name) : 'Todos'}</td>
+    <td class="num">${x.day_off ? 'Folga' : `${x.start_time}–${x.end_time}${x.break_minutes ? ` (interv. ${x.break_minutes} min)` : ''}`}</td>
+    <td>${esc(x.reason)}</td><td><button class="link danger" data-exc="${x.id}">Remover</button></td></tr>`).join('')}</tbody></table></div>`
+    : '<p class="muted">Nenhuma jornada especial no período.</p>';
+  document.querySelectorAll('[data-exc]').forEach(b => b.addEventListener('click', async () => {
+    await api(`/api/exceptions/${b.dataset.exc}`, { method: 'DELETE' }); loadExceptions();
+  }));
+}
+$('#exc-load').addEventListener('click', loadExceptions);
+$('#exc-off').addEventListener('change', e => document.querySelectorAll('.exc-time').forEach(l => l.classList.toggle('hidden', e.target.checked)));
+$('#exc-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const r = await api('/api/exceptions', { method: 'POST', body: {
+      employee_id: f.get('employee_id'), day: f.get('day'), until: f.get('until'), day_off: f.get('day_off') === 'on',
+      start_time: f.get('start_time'), end_time: f.get('end_time'), break_minutes: f.get('break_minutes'), reason: f.get('reason') } });
+    $('#exc-msg').textContent = `Salvo para ${r.days} dia(s).`;
+    loadExceptions();
+  } catch (err) { $('#exc-msg').textContent = err.message; }
+});
+
+// ---------- registro de ocorrências ----------
+const NOTE_KINDS = ['Atestado médico', 'Falta justificada', 'Atraso justificado', 'Saída autorizada', 'Folga compensada', 'Advertência', 'Outro'];
+
+function occQuery() {
+  const q = new URLSearchParams({ from: $('#occ-from').value, to: $('#occ-to').value });
+  if (me.role === 'admin') q.set('employee', $('#occ-emp').value);
+  return q.toString();
+}
+
+async function loadOccurrences() {
+  const admin = me.role === 'admin';
+  const rows = await api(`/api/occurrences?${occQuery()}`);
+  $('#occurrences').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Dia</th>
+    ${admin ? '<th>Funcionário</th>' : ''}<th>Jornada prevista</th><th>Marcações</th><th>Ocorrências</th><th>Justificativa</th>
+    ${admin ? '<th></th>' : ''}</tr></thead><tbody>${rows.map(r => `<tr class="${r.alerts.length ? 'alert' : ''}">
+    <td class="num">${br(r.day)}</td><td>${r.weekday}</td>${admin ? `<td>${esc(r.employee.name)}</td>` : ''}
+    <td class="num">${r.scheduleStart ? `${r.scheduleStart}–${r.scheduleEnd}` : 'Folga'}</td>
+    <td class="num">${r.punches.map(p => p.time).join(' ')}</td>
+    <td>${[r.special ? `Jornada especial: ${r.special}` : '', ...r.alerts].filter(Boolean).map(esc).join('<br>')}</td>
+    <td>${r.notes.map(n => `${esc(noteText(n))}${admin ? ` <button class="link danger" data-note="${n.id}" title="Remover">×</button>` : ''}`).join('<br>')}</td>
+    ${admin ? `<td><button class="link" data-justify="${r.employee.id}|${r.day}">Justificar</button></td>` : ''}</tr>`).join('')}
+    </tbody></table></div>` : '<p class="muted">Nenhuma ocorrência no período.</p>';
+  document.querySelectorAll('[data-justify]').forEach(b => b.addEventListener('click', () => {
+    const [emp, day] = b.dataset.justify.split('|');
+    dialog(`<h2>Justificar ocorrência de ${br(day)}</h2>
+      <label>Tipo<select name="kind">${NOTE_KINDS.map(k => `<option>${k}</option>`).join('')}</select></label>
+      <label>Observação<input name="note"></label>
+      <label><span><input type="checkbox" name="excused"> Abonar o dia (não conta falta, atraso nem débito)</span></label>
+      <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button><button value="ok" class="primary">Salvar</button></div>`,
+    async f => {
+      await api('/api/day-notes', { method: 'POST', body: { employee_id: emp, day, kind: f.get('kind'), note: f.get('note'), excused: f.get('excused') === 'on' } });
+      loadOccurrences();
+    });
+  }));
+  document.querySelectorAll('[data-note]').forEach(b => b.addEventListener('click', async () => {
+    await api(`/api/day-notes/${b.dataset.note}`, { method: 'DELETE' }); loadOccurrences();
+  }));
+}
+$('#occ-load').addEventListener('click', loadOccurrences);
+$('#occ-pdf').addEventListener('click', () => { location.href = `/api/occurrences.pdf?${occQuery()}`; });
+$('#occ-xlsx').addEventListener('click', () => { location.href = `/api/occurrences.xlsx?${occQuery()}`; });
 
 // ---------- conta ----------
 $('#pass-form').addEventListener('submit', async e => {

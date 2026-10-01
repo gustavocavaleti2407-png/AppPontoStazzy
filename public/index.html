@@ -45,6 +45,7 @@
         </div>
         <div class="card">
           <h2>Hoje</h2>
+          <p id="today-schedule" class="muted"></p>
           <div id="today-punches" class="chips"></div>
           <div id="today-summary" class="stats"></div>
           <ul id="today-alerts" class="alerts"></ul>
@@ -64,6 +65,64 @@
             <button id="xlsx-btn">Excel</button>
           </div>
           <div id="report"></div>
+        </div>
+      </section>
+
+      <!-- Ocorrências (admin: todos; funcionário: as próprias) -->
+      <section data-tab="ocorrencias" class="tab">
+        <div class="card">
+          <h2>Registro de jornadas com ocorrências</h2>
+          <div class="filters">
+            <label class="admin-only">Funcionário<select id="occ-emp"></select></label>
+            <label>De<input type="date" id="occ-from"></label>
+            <label>Até<input type="date" id="occ-to"></label>
+            <button id="occ-load">Ver</button>
+            <button id="occ-pdf">PDF</button>
+            <button id="occ-xlsx">Excel</button>
+          </div>
+          <div id="occurrences"></div>
+        </div>
+      </section>
+
+      <!-- Solicitações de correção -->
+      <section data-tab="solicitacoes" class="tab">
+        <div class="card">
+          <h2 id="corr-title">Solicitações de correção</h2>
+          <p class="muted employee-only">Para pedir uma correção, abra <b>Meu espelho</b> e toque em <b>Corrigir</b> no dia desejado. O administrador precisa aprovar.</p>
+          <div class="filters admin-only">
+            <label>Situação<select id="corr-status">
+              <option value="pendente">Pendentes</option><option value="aprovado">Aprovadas</option>
+              <option value="recusado">Recusadas</option><option value="">Todas</option></select></label>
+          </div>
+          <div id="corrections"></div>
+        </div>
+      </section>
+
+      <!-- Admin: jornadas especiais -->
+      <section data-tab="jornadas" class="tab">
+        <div class="card">
+          <h2>Jornada especial em dias específicos</h2>
+          <p class="muted">Use quando a equipe for liberada mais cedo, entrar mais tarde ou tiver folga num dia. Vale no lugar do horário padrão só nesses dias.</p>
+          <form id="exc-form" class="grid-form">
+            <label>Funcionário<select name="employee_id" id="exc-emp"></select></label>
+            <label>De<input type="date" name="day" required></label>
+            <label>Até (opcional)<input type="date" name="until"></label>
+            <label><span><input type="checkbox" name="day_off" id="exc-off"> Folga (não trabalha)</span></label>
+            <label class="exc-time">Entrada<input type="time" name="start_time" value="08:00"></label>
+            <label class="exc-time">Saída<input type="time" name="end_time" value="17:00"></label>
+            <label class="exc-time">Intervalo (min)<input type="number" name="break_minutes" value="60" min="0" max="240"></label>
+            <label>Motivo<input name="reason" placeholder="Ex.: liberadas mais cedo"></label>
+            <div class="full"><button class="primary">Salvar jornada especial</button> <span id="exc-msg" class="muted"></span></div>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Jornadas especiais cadastradas</h2>
+          <div class="filters">
+            <label>De<input type="date" id="exc-from"></label>
+            <label>Até<input type="date" id="exc-to"></label>
+            <button id="exc-load">Ver</button>
+          </div>
+          <div id="exceptions"></div>
         </div>
       </section>
 
@@ -89,6 +148,17 @@
         <div class="card">
           <h2>Regras e configurações</h2>
           <form id="settings-form" class="grid-form"></form>
+        </div>
+        <div class="card">
+          <h2>Avisos por e-mail</h2>
+          <p class="muted">A cada registro de ponto (entrada, intervalo e saída) e a cada pedido de correção, os e-mails abaixo recebem um aviso.</p>
+          <form id="email-form" class="grid-form">
+            <label class="full">E-mails dos administradores (separados por vírgula)<input name="notify_emails" placeholder="dono@exemplo.com, gerente@exemplo.com"></label>
+            <label>Remetente (e-mail verificado no Brevo)<input name="email_from" type="email" placeholder="ponto@exemplo.com"></label>
+            <div class="full"><button class="primary">Salvar e-mails</button> <button type="button" id="email-test">Enviar e-mail de teste</button>
+              <span id="email-msg" class="muted"></span></div>
+          </form>
+          <p id="email-status" class="muted"></p>
         </div>
         <div class="card">
           <h2>Feriados</h2>

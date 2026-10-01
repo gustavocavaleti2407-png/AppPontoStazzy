@@ -54,24 +54,45 @@ function nightMinutes(a, b, s) {
   return total;
 }
 
-function expectedMinutes(emp, day, holidays) {
-  if (holidays[day]) return 0;
+function span(start, end) {
+  let m = parseHM(end) - parseHM(start);
+  if (m < 0) m += 1440; // jornada que passa da meia-noite
+  return m;
+}
+
+/**
+ * Jornada prevista do dia: uma jornada especial cadastrada para o dia vale mais que tudo;
+ * depois feriado, dia de folga da escala, sábado e, por fim, o horário padrão do funcionário.
+ */
+function scheduleFor(emp, day, holidays, exceptions) {
+  const ex = exceptions.find(e => e.day === day && e.employee_id === emp.id)
+    || exceptions.find(e => e.day === day && e.employee_id == null);
+  if (ex) {
+    if (ex.day_off || !ex.start_time || !ex.end_time) return { expected: 0, start: null, end: null, special: ex.reason || 'Folga' };
+    return { expected: Math.max(0, span(ex.start_time, ex.end_time) - ex.break_minutes),
+      start: ex.start_time, end: ex.end_time, special: ex.reason || 'Jornada especial' };
+  }
+  if (holidays[day]) return { expected: 0, start: null, end: null };
   const wd = new Date(`${day}T12:00:00`).getDay();
-  const days = emp.work_days.split(',').map(Number);
-  if (!days.includes(wd)) return 0;
-  return wd === 6 ? emp.saturday_minutes : emp.daily_minutes;
+  if (!emp.work_days.split(',').map(Number).includes(wd)) return { expected: 0, start: null, end: null };
+  if (wd === 6) return { expected: span(emp.sat_start, emp.sat_end), start: emp.sat_start, end: emp.sat_end };
+  return { expected: Math.max(0, span(emp.start_time, emp.end_time) - emp.break_minutes), start: emp.start_time, end: emp.end_time };
 }
 
 /**
  * Calcula um dia de trabalho a partir das marcações.
  * Marcações são pareadas em ordem: entrada, saída, entrada, saída...
  */
-function computeDay(emp, day, punches, prevLastPunch, holidays, s) {
+function computeDay(emp, day, punches, prevLastPunch, holidays, s, exceptions, notes) {
   const tolDaily = Number(s.tolerance_daily);
   const wd = new Date(`${day}T12:00:00`).getDay();
   const isHoliday = !!holidays[day];
   const isSundayOrHoliday = wd === 0 || isHoliday;
-  const expected = expectedMinutes(emp, day, holidays);
+  const sched = scheduleFor(emp, day, holidays, exceptions);
+  const expected = sched.expected;
+  const dayNotes = notes.filter(n => n.day === day);
+  const excused = dayNotes.some(n => n.excused);
+  const lateTol = Number(s.late_tolerance);
 
   const times = punches.map(p => new Date(p.ts));
   const alerts = [];
@@ -89,12 +110,31 @@ function computeDay(emp, day, punches, prevLastPunch, holidays, s) {
   const isPast = day < localDay(new Date());
   if (times.length % 2 === 1 && isPast) alerts.push('Marcação ímpar: falta registrar uma saída');
 
+  // Atraso na entrada e saída antecipada em relação ao horário previsto.
+  let late = 0, early = 0;
+  if (sched.start && times.length) {
+    const first = times[0].getHours() * 60 + times[0].getMinutes();
+    const m = first - parseHM(sched.start);
+    if (m > lateTol) late = m;
+  }
+  if (sched.end && times.length >= 2 && times.length % 2 === 0) {
+    const lastT = times[times.length - 1];
+    const lastMin = (lastT - new Date(`${day}T00:00:00`)) / 60000;
+    let endMin = parseHM(sched.end);
+    if (sched.start && endMin < parseHM(sched.start)) endMin += 1440;
+    const m = Math.round(endMin - lastMin);
+    if (m > lateTol) early = m;
+  }
+  if (excused) { late = 0; early = 0; }
+  if (late) alerts.push(`Atraso de ${hhmm(late)} (entrada prevista ${sched.start})`);
+  if (early) alerts.push(`Saída antecipada de ${hhmm(early)} (saída prevista ${sched.end})`);
+
   // Tolerância (art. 58 §1º): diferenças de até N min no dia não são computadas.
   let diff = worked - expected;
   if (Math.abs(diff) <= tolDaily) diff = 0;
   const overtime = Math.max(0, diff);
-  // Débito só é apurado depois que o dia termina.
-  const deficit = expected > 0 && isPast ? Math.max(0, -diff) : 0;
+  // Débito só é apurado depois que o dia termina; dia abonado não gera débito.
+  const deficit = expected > 0 && isPast && !excused ? Math.max(0, -diff) : 0;
   const overtime50 = isSundayOrHoliday ? 0 : overtime;
   const overtime100 = isSundayOrHoliday ? overtime : 0;
 
@@ -127,12 +167,16 @@ function computeDay(emp, day, punches, prevLastPunch, holidays, s) {
     }
   }
 
-  if (expected > 0 && times.length === 0 && isPast) alerts.push('Falta');
+  if (expected > 0 && times.length === 0 && isPast && !excused) alerts.push('Falta');
 
   return {
     day,
     weekday: WEEKDAYS[wd],
     holiday: holidays[day] || null,
+    special: sched.special || null,
+    scheduleStart: sched.start, scheduleEnd: sched.end,
+    notes: dayNotes.map(n => ({ id: n.id, kind: n.kind, note: n.note, excused: !!n.excused })),
+    excused, late, early,
     punches: punches.map(p => ({ id: p.id, ts: p.ts, time: timeOf(p.ts), source: p.source })),
     expected, worked, breakTotal, breakMissing,
     overtime50, overtime100, deficit, night,
@@ -152,6 +196,11 @@ async function computeReport(employeeId, from, to) {
   const emp = await db.get('SELECT * FROM employees WHERE id = ?', [employeeId]);
   if (!emp) throw Object.assign(new Error('Funcionário não encontrado'), { status: 404 });
   const holidays = await holidayMap();
+  const exceptions = await db.all(
+    'SELECT * FROM schedule_exceptions WHERE day BETWEEN ? AND ? AND (employee_id = ? OR employee_id IS NULL) ORDER BY id DESC',
+    [from, to, employeeId]);
+  const notes = await db.all('SELECT * FROM day_notes WHERE employee_id = ? AND day BETWEEN ? AND ? ORDER BY id',
+    [employeeId, from, to]);
 
   const rows = await db.all(
     'SELECT id, ts, day, source FROM punches WHERE employee_id = ? AND deleted = 0 AND day BETWEEN ? AND ? ORDER BY ts',
@@ -166,7 +215,7 @@ async function computeReport(employeeId, from, to) {
   const days = [];
   for (const day of eachDay(from, to)) {
     const p = byDay[day] || [];
-    days.push(computeDay(emp, day, p, prevLast, holidays, s));
+    days.push(computeDay(emp, day, p, prevLast, holidays, s, exceptions, notes));
     if (p.length) prevLast = p[p.length - 1].ts;
   }
 
@@ -175,6 +224,7 @@ async function computeReport(employeeId, from, to) {
     expected: sum('expected'), worked: sum('worked'),
     overtime50: sum('overtime50'), overtime100: sum('overtime100'),
     deficit: sum('deficit'), night: sum('night'), breakMissing: sum('breakMissing'),
+    late: sum('late'), early: sum('early'), lateDays: days.filter(d => d.late).length,
     balance: sum('balance'),
     absences: days.filter(d => d.alerts.includes('Falta')).length,
     alertDays: days.filter(d => d.alerts.length).length,
@@ -188,4 +238,4 @@ async function computeReport(employeeId, from, to) {
   };
 }
 
-module.exports = { computeReport, localDay, localIso, hhmm, eachDay };
+module.exports = { computeReport, localDay, localIso, hhmm, eachDay, timeOf };

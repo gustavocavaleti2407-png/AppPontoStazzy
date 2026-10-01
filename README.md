@@ -17,6 +17,13 @@ Feito para empresas de até 10 funcionários.
 - Ajuste de marcações (incluir, alterar, excluir) sempre com justificativa, registrado no histórico de ajustes.
 - Regras e feriados configuráveis.
 
+**Novidades**
+- **Horário padrão por funcionário** (entrada, saída e intervalo; sábado à parte), com cálculo de **atraso** e **saída antecipada**.
+- **Jornadas especiais**: horário diferente ou folga em dias específicos, para um funcionário ou para todos.
+- **Avisos por e-mail** aos administradores a cada registro de ponto e a cada pedido de correção (via Brevo).
+- **Pedido de correção**: o funcionário pede para incluir, alterar ou excluir uma marcação; só vale depois que o admin aprova.
+- **Registro de ocorrências**: lista dos dias com atraso, falta, intervalo irregular ou jornada especial, com justificativa (atestado, falta justificada...) e opção de abonar o dia. Exporta PDF e Excel.
+
 ## Regras aplicadas (padrão CLT, todas editáveis em Configurações)
 
 | Regra | Padrão |
@@ -76,6 +83,7 @@ Variáveis de ambiente:
 | `ADMIN_LOGIN`, `ADMIN_PASSWORD` | administrador criado na primeira execução |
 | `TZ` | fuso horário (padrão `America/Sao_Paulo`) |
 | `PORT` | porta HTTP (padrão 3000) |
+| `BREVO_API_KEY` | chave do Brevo para os avisos por e-mail |
 
 **Backup:** o Neon guarda histórico de restauração; no SQLite, copie o arquivo `ponto.db` periodicamente.
 
