@@ -17,6 +17,7 @@ const COLS = [
   { key: 'overtime50', label: 'HE 50%', w: 42 },
   { key: 'overtime100', label: 'HE 100%', w: 44 },
   { key: 'deficit', label: 'Débito', w: 40 },
+  { key: 'late', label: 'Atraso', w: 40 },
   { key: 'night', label: 'Noturno', w: 42 },
   { key: 'alerts', label: 'Ocorrências', w: 200 },
 ];
@@ -33,9 +34,23 @@ function rowValues(d) {
     overtime50: t(d.overtime50),
     overtime100: t(d.overtime100),
     deficit: t(d.deficit),
+    late: t(d.late),
     night: t(d.night),
-    alerts: [d.holiday ? `Feriado: ${d.holiday}` : null, ...d.alerts].filter(Boolean).join('; '),
+    alerts: dayNotesText(d),
   };
+}
+
+function noteText(n) {
+  return `${n.kind}${n.excused ? ' (abonado)' : ''}${n.note ? `: ${n.note}` : ''}`;
+}
+
+function dayNotesText(d) {
+  return [
+    d.holiday ? `Feriado: ${d.holiday}` : null,
+    d.special ? `Jornada especial: ${d.special}${d.scheduleStart ? ` (${d.scheduleStart}–${d.scheduleEnd})` : ''}` : null,
+    ...d.alerts,
+    ...(d.notes || []).map(noteText),
+  ].filter(Boolean).join('; ');
 }
 
 function totalLines(r) {
@@ -49,6 +64,8 @@ function totalLines(r) {
     ['Saldo (banco de horas)', hhmm(t.balance)],
     ['Adicional noturno (22h–5h)', hhmm(t.night)],
     ['Intervalo suprimido', hhmm(t.breakMissing)],
+    ['Atrasos', `${hhmm(t.late)} em ${t.lateDays} dia(s)`],
+    ['Saídas antecipadas', hhmm(t.early)],
     ['Faltas', String(t.absences)],
   ];
 }
@@ -166,4 +183,81 @@ async function buildXlsx(reports, res) {
   res.end();
 }
 
-module.exports = { buildPdf, buildXlsx };
+// ---------- registro de ocorrências ----------
+const OCC_COLS = [
+  { key: 'date', label: 'Data', w: 56 },
+  { key: 'weekday', label: 'Dia', w: 28 },
+  { key: 'name', label: 'Funcionário', w: 110 },
+  { key: 'schedule', label: 'Jornada prevista', w: 70 },
+  { key: 'punches', label: 'Marcações', w: 120 },
+  { key: 'alerts', label: 'Ocorrências', w: 220 },
+  { key: 'notes', label: 'Justificativa', w: 178 },
+];
+
+function occValues(r) {
+  return {
+    date: br(r.day), weekday: r.weekday, name: r.employee.name,
+    schedule: r.scheduleStart ? `${r.scheduleStart}–${r.scheduleEnd}` : (r.special || 'Folga'),
+    punches: r.punches.map(p => p.time).join('  '),
+    alerts: [r.special ? `Jornada especial: ${r.special}` : null, ...r.alerts].filter(Boolean).join('; '),
+    notes: r.notes.map(noteText).join('; '),
+  };
+}
+
+function buildOccurrencesPdf(o, res) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
+  doc.pipe(res);
+  doc.fontSize(18).font('Helvetica-Bold').fillColor('#6f55c9').text(o.company).fillColor('black');
+  doc.moveTo(doc.page.margins.left, doc.y + 2).lineTo(doc.page.width - doc.page.margins.right, doc.y + 2).lineWidth(2).strokeColor('#ffda67').stroke();
+  doc.moveDown(0.4);
+  doc.fontSize(11).font('Helvetica').text('Registro de jornadas com ocorrências').text(`Período: ${br(o.from)} a ${br(o.to)}`);
+  doc.moveDown(0.6);
+  const x0 = doc.page.margins.left;
+  const width = OCC_COLS.reduce((a, c) => a + c.w, 0);
+  let y = doc.y;
+  const header = () => {
+    doc.font('Helvetica-Bold').fontSize(8);
+    doc.rect(x0, y - 2, width, 14).fill('#f1ecfe').fillColor('black');
+    let x = x0;
+    for (const c of OCC_COLS) { doc.text(c.label, x + 2, y + 1, { width: c.w - 4 }); x += c.w; }
+    y += 14;
+    doc.font('Helvetica').fontSize(8);
+  };
+  header();
+  if (!o.rows.length) doc.text('Nenhuma ocorrência no período.', x0, y + 4);
+  for (const r of o.rows) {
+    const v = occValues(r);
+    const h = Math.max(12, ...OCC_COLS.map(c => doc.heightOfString(v[c.key] || ' ', { width: c.w - 4 }))) + 3;
+    if (y + h > doc.page.height - doc.page.margins.bottom) { doc.addPage(); y = doc.page.margins.top; header(); }
+    let x = x0;
+    for (const c of OCC_COLS) {
+      doc.fillColor(c.key === 'alerts' && r.alerts.length ? '#c2185b' : 'black').text(v[c.key], x + 2, y + 1, { width: c.w - 4 });
+      x += c.w;
+    }
+    doc.fillColor('black');
+    y += h;
+    doc.moveTo(x0, y - 1).lineTo(x0 + width, y - 1).lineWidth(0.3).strokeColor('#ccc').stroke();
+  }
+  doc.end();
+}
+
+async function buildOccurrencesXlsx(o, res) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Stazzy Ponto';
+  const ws = wb.addWorksheet('Ocorrências');
+  ws.addRow([`${o.company} — Registro de jornadas com ocorrências`]).font = { bold: true, size: 13 };
+  ws.addRow([`Período: ${br(o.from)} a ${br(o.to)}`]);
+  ws.addRow([]);
+  const hdr = ws.addRow(OCC_COLS.map(c => c.label));
+  hdr.font = { bold: true, color: { argb: 'FF6F55C9' } };
+  hdr.eachCell(c => { c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1ECFE' } }; });
+  for (const r of o.rows) {
+    const v = occValues(r);
+    ws.addRow(OCC_COLS.map(c => v[c.key]));
+  }
+  OCC_COLS.forEach((c, i) => { ws.getColumn(i + 1).width = Math.round(c.w / 5); });
+  await wb.xlsx.write(res);
+  res.end();
+}
+
+module.exports = { buildPdf, buildXlsx, buildOccurrencesPdf, buildOccurrencesXlsx };

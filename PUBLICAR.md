@@ -74,6 +74,26 @@ Isso também avisa você por e-mail se o app sair do ar. As 750 horas grátis po
 
 ---
 
+## Parte 5: avisos por e-mail (Brevo, grátis)
+
+O app avisa por e-mail cada registro de ponto (entrada, intervalo e saída) e cada pedido de correção. O envio usa o Brevo, que é grátis até 300 e-mails por dia.
+
+1. Acesse **https://www.brevo.com** e crie uma conta grátis (*Sign up free*).
+2. Confirme o e-mail que vai **enviar** os avisos: menu do seu nome (canto superior direito) > **Senders, Domains & Dedicated IPs** > **Senders** > **Add a sender**. Informe nome "Stazzy Ponto" e o e-mail (pode ser o seu Gmail). Abra o e-mail de confirmação que o Brevo mandar e clique no link.
+3. Crie a chave: menu do seu nome > **SMTP & API** > aba **API Keys** > **Generate a new API key**. Dê o nome "stazzy-ponto" e copie a chave (começa com `xkeysib-`). **Não cole na conversa.**
+4. No Render, abra o serviço **stazzy-ponto** > **Environment** > **Add Environment Variable**:
+   - **Key:** `BREVO_API_KEY`
+   - **Value:** a chave copiada
+   - Clique em **Save Changes**. O app reinicia sozinho em 1 ou 2 minutos.
+5. No app, entre como admin > **Configurações** > **Avisos por e-mail**:
+   - **E-mails dos administradores:** quem recebe os avisos (separe com vírgula)
+   - **Remetente:** o mesmo e-mail confirmado no passo 2
+   - Clique em **Salvar e-mails** e depois em **Enviar e-mail de teste**.
+
+Se o teste não chegar, olhe a caixa de spam e confira se o remetente foi confirmado no Brevo.
+
+---
+
 ## Se algo der errado
 
 - **O deploy falhou no Render:** abra o serviço, clique em **Logs** e copie as últimas linhas (sem a connection string) para mim.

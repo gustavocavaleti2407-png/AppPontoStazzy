@@ -60,7 +60,59 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Jornada diferente da padrão em dias específicos (employee_id NULL = todos os funcionários).
+CREATE TABLE IF NOT EXISTS schedule_exceptions (
+  id ${pk},
+  employee_id INTEGER REFERENCES employees(id),
+  day TEXT NOT NULL,
+  start_time TEXT,
+  end_time TEXT,
+  break_minutes INTEGER NOT NULL DEFAULT 0,
+  day_off INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT ${now}
+);
+CREATE INDEX IF NOT EXISTS idx_exceptions_day ON schedule_exceptions(day);
+
+-- Pedidos de correção feitos pelo funcionário, aprovados ou recusados pelo admin.
+CREATE TABLE IF NOT EXISTS correction_requests (
+  id ${pk},
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  day TEXT NOT NULL,
+  action TEXT NOT NULL,            -- 'incluir' | 'alterar' | 'excluir'
+  punch_id INTEGER,
+  time TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pendente',   -- 'pendente' | 'aprovado' | 'recusado'
+  reviewed_by INTEGER,
+  review_note TEXT,
+  reviewed_at TEXT,
+  created_at TEXT NOT NULL DEFAULT ${now}
+);
+
+-- Justificativas de ocorrências (atestado, falta justificada...). excused = 1 abona o dia.
+CREATE TABLE IF NOT EXISTS day_notes (
+  id ${pk},
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  day TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  note TEXT,
+  excused INTEGER NOT NULL DEFAULT 0,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT ${now}
+);
+CREATE INDEX IF NOT EXISTS idx_day_notes ON day_notes(employee_id, day);
 `;
+
+// Colunas adicionadas depois da primeira versão (o banco já publicado é atualizado na inicialização).
+const NEW_COLUMNS = [
+  ['employees', 'start_time', "TEXT NOT NULL DEFAULT '08:00'"],
+  ['employees', 'end_time', "TEXT NOT NULL DEFAULT '17:00'"],
+  ['employees', 'break_minutes', 'INTEGER NOT NULL DEFAULT 60'],
+  ['employees', 'sat_start', "TEXT NOT NULL DEFAULT '08:00'"],
+  ['employees', 'sat_end', "TEXT NOT NULL DEFAULT '12:00'"],
+];
 
 let db;
 
@@ -78,6 +130,9 @@ if (usePg) {
     async get(sql, params = []) { return (await pool.query(toPg(sql), params)).rows[0]; },
     async run(sql, params = []) { await pool.query(toPg(sql), params); },
     async exec(sql) { await pool.query(sql); },
+    async hasColumn(table, col) {
+      return !!(await pool.query('SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = $2', [table, col])).rows[0];
+    },
   };
 } else {
   const { DatabaseSync } = require('node:sqlite');
@@ -91,6 +146,9 @@ if (usePg) {
     async get(sql, params = []) { return sqlite.prepare(sql).get(...params); },
     async run(sql, params = []) { sqlite.prepare(sql).run(...params); },
     async exec(sql) { sqlite.exec(sql); },
+    async hasColumn(table, col) {
+      return sqlite.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === col);
+    },
   };
 }
 
@@ -106,12 +164,19 @@ const DEFAULT_SETTINGS = {
   min_interjornada: '660',         // 11h entre jornadas
   night_start: '22:00',            // adicional noturno 22h-5h
   night_end: '05:00',
+  late_tolerance: '10',            // minutos de atraso/saída antecipada tolerados
+  notify_emails: '',               // e-mails dos administradores, separados por vírgula
+  email_from: '',                  // remetente verificado no Brevo
 };
 
 async function init() {
   await db.exec(usePg
     ? SCHEMA('SERIAL PRIMARY KEY', 'BIGINT', "(to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'))")
     : SCHEMA('INTEGER PRIMARY KEY AUTOINCREMENT', 'INTEGER', "(datetime('now'))"));
+
+  for (const [table, col, def] of NEW_COLUMNS) {
+    if (!(await db.hasColumn(table, col))) await db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  }
 
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
     await db.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO NOTHING', [k, v]);
