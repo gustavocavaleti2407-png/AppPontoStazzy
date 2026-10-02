@@ -76,7 +76,7 @@ Isso também avisa você por e-mail se o app sair do ar. As 750 horas grátis po
 
 ## Parte 5: avisos por e-mail (Brevo, grátis)
 
-O app avisa por e-mail cada registro de ponto (entrada, intervalo e saída) e cada pedido de correção. O envio usa o Brevo, que é grátis até 300 e-mails por dia.
+O app avisa por e-mail cada registro de ponto (entrada, intervalo e saída), cada pedido de correção e cada pedido de férias. O envio usa o Brevo, que é grátis até 300 e-mails por dia.
 
 1. Acesse **https://www.brevo.com** e crie uma conta grátis (*Sign up free*).
 2. Confirme o e-mail que vai **enviar** os avisos: menu do seu nome (canto superior direito) > **Senders, Domains & Dedicated IPs** > **Senders** > **Add a sender**. Informe nome "Stazzy Ponto" e o e-mail (pode ser o seu Gmail). Abra o e-mail de confirmação que o Brevo mandar e clique no link.

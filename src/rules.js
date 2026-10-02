@@ -68,6 +68,7 @@ function scheduleFor(emp, day, holidays, exceptions) {
   const ex = exceptions.find(e => e.day === day && e.employee_id === emp.id)
     || exceptions.find(e => e.day === day && e.employee_id == null);
   if (ex) {
+    if (ex.vacation) return { expected: 0, start: null, end: null, special: 'Férias', vacation: true };
     if (ex.day_off || !ex.start_time || !ex.end_time) return { expected: 0, start: null, end: null, special: ex.reason || 'Folga' };
     return { expected: Math.max(0, span(ex.start_time, ex.end_time) - ex.break_minutes),
       start: ex.start_time, end: ex.end_time, special: ex.reason || 'Jornada especial' };
@@ -174,6 +175,7 @@ function computeDay(emp, day, punches, prevLastPunch, holidays, s, exceptions, n
     weekday: WEEKDAYS[wd],
     holiday: holidays[day] || null,
     special: sched.special || null,
+    vacation: !!sched.vacation,
     scheduleStart: sched.start, scheduleEnd: sched.end,
     notes: dayNotes.map(n => ({ id: n.id, kind: n.kind, note: n.note, excused: !!n.excused })),
     excused, late, early,
@@ -201,6 +203,15 @@ async function computeReport(employeeId, from, to) {
     [from, to, employeeId]);
   const notes = await db.all('SELECT * FROM day_notes WHERE employee_id = ? AND day BETWEEN ? AND ? ORDER BY id',
     [employeeId, from, to]);
+  // Férias aprovadas valem mais que qualquer jornada: entram na frente da lista de jornadas especiais.
+  const vacations = await db.all(
+    `SELECT start_day, end_day FROM vacation_requests WHERE employee_id = ? AND status = 'aprovado'
+     AND start_day IS NOT NULL AND start_day <= ? AND end_day >= ?`, [employeeId, to, from]);
+  for (const v of vacations) {
+    for (const day of eachDay(v.start_day > from ? v.start_day : from, v.end_day < to ? v.end_day : to)) {
+      exceptions.unshift({ day, employee_id: emp.id, vacation: true });
+    }
+  }
 
   const rows = await db.all(
     'SELECT id, ts, day, source FROM punches WHERE employee_id = ? AND deleted = 0 AND day BETWEEN ? AND ? ORDER BY ts',
@@ -228,6 +239,7 @@ async function computeReport(employeeId, from, to) {
     balance: sum('balance'),
     absences: days.filter(d => d.alerts.includes('Falta')).length,
     alertDays: days.filter(d => d.alerts.length).length,
+    vacationDays: days.filter(d => d.vacation).length,
   };
 
   return {

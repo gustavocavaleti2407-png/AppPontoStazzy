@@ -1,5 +1,5 @@
 // Service worker mínimo: permite instalar o app na tela inicial. O ponto sempre é registrado online.
-const CACHE = 'stazzy-v3';
+const CACHE = 'stazzy-v4';
 const ASSETS = ['/', '/index.html', '/style.css', '/app.js', '/icon.svg', '/manifest.json'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS))));
 self.addEventListener('activate', e => e.waitUntil(

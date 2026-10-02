@@ -98,6 +98,39 @@
         </div>
       </section>
 
+      <!-- Férias: saldo, pedidos e aprovação -->
+      <section data-tab="ferias" class="tab">
+        <div class="card">
+          <h2>Férias</h2>
+          <div id="vac-summary"></div>
+        </div>
+        <div class="card employee-only">
+          <h2>Pedir férias</h2>
+          <p class="muted">Informe o período de descanso, os dias que quer vender (abono, até 10 dias) ou os dois. O administrador recebe um aviso e precisa aprovar.</p>
+          <form id="vac-form">
+            <div class="two-cols"><label>Início<input type="date" name="start_day"></label>
+              <label>Fim<input type="date" name="end_day"></label></div>
+            <label>Dias para vender<input type="number" name="sell_days" min="0" max="10" value="0"></label>
+            <label>Observação (opcional)<input name="note"></label>
+            <p class="muted" id="vac-count"></p>
+            <button class="primary">Enviar para aprovação</button>
+            <p class="muted" id="vac-msg"></p>
+          </form>
+          <p class="muted">Regras da CLT: as férias podem ser divididas em até 3 períodos, sendo um com pelo menos 14 dias e os outros com pelo menos 5 dias.</p>
+        </div>
+        <div class="card">
+          <h2 id="vac-req-title">Pedidos de férias</h2>
+          <div class="filters admin-only">
+            <label>Situação<select id="vac-status">
+              <option value="pendente">Pendentes</option><option value="aprovado">Aprovados</option>
+              <option value="recusado">Recusados</option><option value="cancelado">Cancelados</option><option value="">Todos</option></select></label>
+            <button id="vac-new" class="primary">Lançar férias</button>
+            <button id="vac-adjust">Ajustar saldo</button>
+          </div>
+          <div id="vac-requests"></div>
+        </div>
+      </section>
+
       <!-- Admin: jornadas especiais -->
       <section data-tab="jornadas" class="tab">
         <div class="card">

@@ -28,6 +28,7 @@ button.danger { color: var(--danger); }
 button.link { border: none; background: none; color: var(--primary); padding: 4px; }
 button:disabled { opacity: .6; }
 .error { color: var(--danger); min-height: 1.2em; }
+.error-text { color: var(--danger); font-size: .85rem; }
 .muted { color: var(--muted); }
 
 .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
