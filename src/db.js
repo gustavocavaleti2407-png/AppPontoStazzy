@@ -103,6 +103,32 @@ CREATE TABLE IF NOT EXISTS day_notes (
   created_at TEXT NOT NULL DEFAULT ${now}
 );
 CREATE INDEX IF NOT EXISTS idx_day_notes ON day_notes(employee_id, day);
+
+-- Férias: pedidos (gozo e/ou venda de dias) e ajustes manuais de saldo feitos pelo admin.
+CREATE TABLE IF NOT EXISTS vacation_requests (
+  id ${pk},
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  start_day TEXT,                  -- NULL quando o pedido é só de venda de dias
+  end_day TEXT,
+  days INTEGER NOT NULL DEFAULT 0, -- dias corridos de descanso
+  sell_days INTEGER NOT NULL DEFAULT 0,  -- abono pecuniário (venda de até 1/3)
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'pendente',  -- 'pendente' | 'aprovado' | 'recusado' | 'cancelado'
+  reviewed_by INTEGER,
+  review_note TEXT,
+  reviewed_at TEXT,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT ${now}
+);
+
+CREATE TABLE IF NOT EXISTS vacation_adjustments (
+  id ${pk},
+  employee_id INTEGER NOT NULL REFERENCES employees(id),
+  days INTEGER NOT NULL,           -- positivo soma ao saldo, negativo desconta
+  reason TEXT NOT NULL,
+  created_by INTEGER,
+  created_at TEXT NOT NULL DEFAULT ${now}
+);
 `;
 
 // Colunas adicionadas depois da primeira versão (o banco já publicado é atualizado na inicialização).
@@ -112,6 +138,7 @@ const NEW_COLUMNS = [
   ['employees', 'break_minutes', 'INTEGER NOT NULL DEFAULT 60'],
   ['employees', 'sat_start', "TEXT NOT NULL DEFAULT '08:00'"],
   ['employees', 'sat_end', "TEXT NOT NULL DEFAULT '12:00'"],
+  ['employees', 'hire_date', 'TEXT'],
 ];
 
 let db;

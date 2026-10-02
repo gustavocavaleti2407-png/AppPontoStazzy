@@ -47,7 +47,8 @@ function noteText(n) {
 function dayNotesText(d) {
   return [
     d.holiday ? `Feriado: ${d.holiday}` : null,
-    d.special ? `Jornada especial: ${d.special}${d.scheduleStart ? ` (${d.scheduleStart}–${d.scheduleEnd})` : ''}` : null,
+    d.vacation ? 'Férias' : null,
+    d.special && !d.vacation ? `Jornada especial: ${d.special}${d.scheduleStart ? ` (${d.scheduleStart}–${d.scheduleEnd})` : ''}` : null,
     ...d.alerts,
     ...(d.notes || []).map(noteText),
   ].filter(Boolean).join('; ');
@@ -199,7 +200,7 @@ function occValues(r) {
     date: br(r.day), weekday: r.weekday, name: r.employee.name,
     schedule: r.scheduleStart ? `${r.scheduleStart}–${r.scheduleEnd}` : (r.special || 'Folga'),
     punches: r.punches.map(p => p.time).join('  '),
-    alerts: [r.special ? `Jornada especial: ${r.special}` : null, ...r.alerts].filter(Boolean).join('; '),
+    alerts: [r.special && !r.vacation ? `Jornada especial: ${r.special}` : (r.vacation ? 'Férias' : null), ...r.alerts].filter(Boolean).join('; '),
     notes: r.notes.map(noteText).join('; '),
   };
 }

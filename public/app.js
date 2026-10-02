@@ -44,15 +44,15 @@ $('#logout').addEventListener('click', async () => { await api('/api/logout', { 
 function tabsFor(role) {
   return role === 'admin'
     ? [['painel', 'Painel'], ['espelho', 'Relatórios'], ['ocorrencias', 'Ocorrências'], ['solicitacoes', 'Solicitações'],
-      ['jornadas', 'Jornadas especiais'], ['funcionarios', 'Funcionários'], ['config', 'Configurações'], ['conta', 'Conta']]
-    : [['ponto', 'Bater ponto'], ['espelho', 'Meu espelho'], ['ocorrencias', 'Ocorrências'], ['solicitacoes', 'Correções'], ['conta', 'Conta']];
+      ['ferias', 'Férias'], ['jornadas', 'Jornadas especiais'], ['funcionarios', 'Funcionários'], ['config', 'Configurações'], ['conta', 'Conta']]
+    : [['ponto', 'Bater ponto'], ['espelho', 'Meu espelho'], ['ocorrencias', 'Ocorrências'], ['solicitacoes', 'Correções'], ['ferias', 'Férias'], ['conta', 'Conta']];
 }
 
 function openTab(name) {
   document.querySelectorAll('.tab').forEach(s => s.classList.toggle('hidden', s.dataset.tab !== name));
   document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   ({ ponto: loadToday, espelho: loadReport, painel: loadPanel, funcionarios: loadEmployees, config: loadConfig,
-    ocorrencias: loadOccurrences, solicitacoes: loadCorrections, jornadas: loadExceptions }[name] || (() => {}))();
+    ocorrencias: loadOccurrences, solicitacoes: loadCorrections, jornadas: loadExceptions, ferias: loadVacations }[name] || (() => {}))();
 }
 
 function refreshEmpFilter() {
@@ -69,9 +69,12 @@ function addDays(day, n) {
 
 async function refreshPendingBadge() {
   if (me.role !== 'admin') return;
-  const pend = await api('/api/corrections?status=pendente').catch(() => []);
+  const [pend, vac] = await Promise.all([api('/api/corrections?status=pendente').catch(() => []),
+    api('/api/vacations/requests?status=pendente').catch(() => [])]);
   const b = document.querySelector('#tabs button[data-tab="solicitacoes"]');
   if (b) b.textContent = pend.length ? `Solicitações (${pend.length})` : 'Solicitações';
+  const v = document.querySelector('#tabs button[data-tab="ferias"]');
+  if (v) v.textContent = vac.length ? `Férias (${vac.length})` : 'Férias';
 }
 
 async function start() {
@@ -184,7 +187,8 @@ function noteText(n) { return `${n.kind}${n.excused ? ' (abonado)' : ''}${n.note
 function dayNotes(d) {
   return [
     d.holiday ? `Feriado: ${d.holiday}` : '',
-    d.special ? `Jornada especial: ${d.special}${d.scheduleStart ? ` (${d.scheduleStart}–${d.scheduleEnd})` : ''}` : '',
+    d.vacation ? 'Férias' : '',
+    d.special && !d.vacation ? `Jornada especial: ${d.special}${d.scheduleStart ? ` (${d.scheduleStart}–${d.scheduleEnd})` : ''}` : '',
     ...d.alerts, ...(d.notes || []).map(noteText),
   ].filter(Boolean).map(esc).join('<br>');
 }
@@ -264,6 +268,7 @@ function employeeForm(e) {
     <label>Nome<input name="name" value="${esc(e.name)}" required></label>
     <label>Login<input name="login" value="${esc(e.login)}" ${isNew ? 'required' : 'disabled'} autocapitalize="none"></label>
     <label>${isNew ? 'Senha' : 'Nova senha (deixe vazio para manter)'}<input name="password" type="password" minlength="6" ${isNew ? 'required' : ''}></label>
+    <label>Data de admissão (para calcular as férias)<input name="hire_date" type="date" value="${e.hire_date || ''}"></label>
     <label>Perfil<select name="role"><option value="employee">Funcionário</option><option value="admin" ${e.role === 'admin' ? 'selected' : ''}>Administrador</option></select></label>
     <div class="two-cols"><label>Entrada padrão<input name="start_time" type="time" value="${e.start_time}" required></label>
       <label>Saída padrão<input name="end_time" type="time" value="${e.end_time}" required></label></div>
@@ -278,7 +283,7 @@ function employeeForm(e) {
     const body = {
       name: f.get('name'), role: f.get('role'), work_days: f.getAll('wd').join(',') || '1,2,3,4,5',
       start_time: f.get('start_time'), end_time: f.get('end_time'), break_minutes: Number(f.get('break_minutes') || 0),
-      sat_start: f.get('sat_start') || '08:00', sat_end: f.get('sat_end') || '12:00',
+      sat_start: f.get('sat_start') || '08:00', sat_end: f.get('sat_end') || '12:00', hire_date: f.get('hire_date') || null,
     };
     if (f.get('password')) body.password = f.get('password');
     if (isNew) { body.login = f.get('login'); await api('/api/employees', { method: 'POST', body }); }
@@ -419,6 +424,129 @@ async function loadCorrections() {
   }));
 }
 $('#corr-status').addEventListener('change', loadCorrections);
+
+// ---------- férias ----------
+const VAC_BADGE = { pendente: 'warn', aprovado: 'ok', recusado: '', cancelado: '' };
+
+function vacDays(start, end) {
+  if (!start || !end || end < start) return 0;
+  return Math.round((new Date(`${end}T12:00:00`) - new Date(`${start}T12:00:00`)) / 86400000) + 1;
+}
+
+function describeVacation(v) {
+  const parts = [];
+  if (v.days) parts.push(`${br(v.start_day)} a ${br(v.end_day)} (${v.days} dias)`);
+  if (v.sell_days) parts.push(`vender ${v.sell_days} dia${v.sell_days == 1 ? '' : 's'}`);
+  return parts.join(' + ');
+}
+
+async function loadVacations() {
+  const admin = me.role === 'admin';
+  const sums = await api('/api/vacations/summary');
+  if (admin) {
+    $('#vac-summary').innerHTML = sums.length ? `<div class="table-wrap"><table><thead><tr><th>Funcionário</th><th>Admissão</th>
+      <th>Disponível</th><th>Em pedidos</th><th>Tirados</th><th>Vendidos</th><th>Acumulando</th><th>Próximas férias</th><th>Avisos</th></tr></thead>
+      <tbody>${sums.map(x => `<tr><td>${esc(x.employee.name)}</td>
+      <td class="num">${x.employee.hire_date ? br(x.employee.hire_date) : '<span class="muted">não informada</span>'}</td>
+      <td class="num"><b>${x.available}</b></td><td class="num">${x.reserved || ''}</td><td class="num">${x.used || ''}</td>
+      <td class="num">${x.sold || ''}</td><td class="num">${x.employee.hire_date ? x.accruing : ''}</td>
+      <td>${x.upcoming.filter(v => v.days).map(v => `${br(v.start_day)} a ${br(v.end_day)}`).join('<br>')}</td>
+      <td class="error-text">${x.alerts.map(esc).join('<br>')}</td></tr>`).join('')}</tbody></table></div>
+      <p class="muted">Dias corridos. A cada 12 meses desde a admissão o funcionário ganha 30 dias, que precisam ser tirados nos 12 meses seguintes.</p>`
+      : '<p class="muted">Nenhum funcionário ativo.</p>';
+  } else {
+    const x = sums[0];
+    $('#vac-summary').innerHTML = `<div class="stats">${stat('Dias disponíveis', x.available)}${stat('Aguardando aprovação', x.reserved)}
+      ${stat('Já tirados', x.used)}${stat('Vendidos', x.sold)}${x.employee.hire_date ? stat('Acumulando no período atual', x.accruing) : ''}</div>
+      ${x.nextDeadline ? `<p class="muted">Tire os dias disponíveis até ${br(x.nextDeadline)}.</p>` : ''}
+      ${x.upcoming.filter(v => v.days).length ? `<p>Próximas férias: ${x.upcoming.filter(v => v.days).map(v => `<b>${br(v.start_day)} a ${br(v.end_day)}</b>`).join(', ')}</p>` : ''}
+      ${x.alerts.length ? `<ul class="alerts">${x.alerts.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : ''}`;
+    $('#vac-form').dataset.free = x.available - x.reserved;
+    updateVacCount();
+  }
+
+  const q = admin ? `?status=${$('#vac-status').value}` : '';
+  const rows = await api(`/api/vacations/requests${q}`);
+  $('#vac-req-title').textContent = admin ? 'Pedidos de férias' : 'Meus pedidos';
+  $('#vac-requests').innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr>${admin ? '<th>Funcionário</th>' : ''}
+    <th>Pedido</th><th>Observação</th><th>Enviado em</th><th>Situação</th><th></th></tr></thead><tbody>${rows.map(v => `<tr>
+    ${admin ? `<td>${esc(v.employee_name)}</td>` : ''}<td>${esc(describeVacation(v))}</td><td>${esc(v.note)}</td>
+    <td class="num">${br(String(v.created_at).slice(0, 10))}</td>
+    <td><span class="badge ${VAC_BADGE[v.status]}">${v.status}</span>
+      ${v.review_note ? `<br><span class="muted">${esc(v.review_note)}</span>` : ''}</td>
+    <td>${admin
+      ? (v.status === 'pendente' ? `<button class="link" data-vapprove="${v.id}">Aprovar</button> <button class="link danger" data-vreject="${v.id}">Recusar</button>`
+        : v.status === 'aprovado' ? `<button class="link danger" data-vcancel="${v.id}">Cancelar</button>` : '')
+      : (v.status === 'pendente' ? `<button class="link danger" data-vcancel="${v.id}">Cancelar</button>` : '')}</td></tr>`).join('')}</tbody></table></div>`
+    : '<p class="muted">Nenhum pedido de férias.</p>';
+
+  const review = (id, approve) => dialog(`<h2>${approve ? 'Aprovar' : 'Recusar'} férias</h2>
+    <label>Observação (opcional)<input name="note"></label>
+    <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button>
+      <button value="ok" class="${approve ? 'primary' : 'danger'}">${approve ? 'Aprovar' : 'Recusar'}</button></div>`,
+  async f => {
+    await api(`/api/vacations/requests/${id}/${approve ? 'approve' : 'reject'}`, { method: 'POST', body: { note: f.get('note') } });
+    loadVacations(); refreshPendingBadge();
+  });
+  document.querySelectorAll('[data-vapprove]').forEach(b => b.addEventListener('click', () => review(b.dataset.vapprove, true)));
+  document.querySelectorAll('[data-vreject]').forEach(b => b.addEventListener('click', () => review(b.dataset.vreject, false)));
+  document.querySelectorAll('[data-vcancel]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm(admin ? 'Cancelar essas férias? Os dias voltam para o saldo.' : 'Cancelar este pedido?')) return;
+    await api(`/api/vacations/requests/${b.dataset.vcancel}`, { method: 'DELETE' });
+    loadVacations(); refreshPendingBadge();
+  }));
+}
+
+function updateVacCount() {
+  const f = $('#vac-form');
+  const days = vacDays(f.start_day.value, f.end_day.value), sell = Number(f.sell_days.value || 0);
+  const free = Number(f.dataset.free || 0);
+  $('#vac-count').textContent = days || sell
+    ? `Total do pedido: ${days ? `${days} dia${days === 1 ? '' : 's'} de descanso` : ''}${days && sell ? ' + ' : ''}${sell ? `${sell} vendido${sell === 1 ? '' : 's'}` : ''}. Saldo depois: ${free - days - sell} dia(s).`
+    : `Você pode pedir até ${Math.max(0, free)} dia(s).`;
+}
+
+$('#vac-form').addEventListener('input', updateVacCount);
+$('#vac-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    await api('/api/vacations/requests', { method: 'POST', body: {
+      start_day: f.get('start_day') || null, end_day: f.get('end_day') || null,
+      sell_days: Number(f.get('sell_days') || 0), note: f.get('note') } });
+    e.target.reset();
+    $('#vac-msg').textContent = 'Pedido enviado. O administrador foi avisado.';
+    loadVacations();
+  } catch (err) { $('#vac-msg').textContent = err.message; }
+});
+$('#vac-status').addEventListener('change', loadVacations);
+
+const empOptions = () => employees.filter(e => e.active && e.role === 'employee').map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+
+$('#vac-new').addEventListener('click', () => dialog(`<h2>Lançar férias</h2>
+  <p class="muted">Férias lançadas pelo administrador já entram aprovadas. Pode usar datas passadas.</p>
+  <label>Funcionário<select name="employee_id" required>${empOptions()}</select></label>
+  <div class="two-cols"><label>Início<input type="date" name="start_day"></label><label>Fim<input type="date" name="end_day"></label></div>
+  <label>Dias vendidos<input type="number" name="sell_days" min="0" max="10" value="0"></label>
+  <label>Observação (opcional)<input name="note"></label>
+  <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button><button value="save" class="primary">Lançar</button></div>`,
+async f => {
+  await api('/api/vacations/requests', { method: 'POST', body: { employee_id: f.get('employee_id'),
+    start_day: f.get('start_day') || null, end_day: f.get('end_day') || null, sell_days: Number(f.get('sell_days') || 0), note: f.get('note') } });
+  $('#vac-status').value = 'aprovado';
+  loadVacations();
+}));
+
+$('#vac-adjust').addEventListener('click', () => dialog(`<h2>Ajustar saldo de férias</h2>
+  <p class="muted">Use para dias tirados antes de usar o app (número negativo) ou para somar dias combinados (positivo).</p>
+  <label>Funcionário<select name="employee_id" required>${empOptions()}</select></label>
+  <label>Dias<input type="number" name="days" required placeholder="Ex.: -10 ou 5"></label>
+  <label>Motivo<input name="reason" required></label>
+  <div class="row-actions"><button value="cancel" formnovalidate>Cancelar</button><button value="save" class="primary">Salvar</button></div>`,
+async f => {
+  await api('/api/vacations/adjustments', { method: 'POST', body: { employee_id: f.get('employee_id'), days: Number(f.get('days')), reason: f.get('reason') } });
+  loadVacations();
+}));
 
 // ---------- jornadas especiais ----------
 async function loadExceptions() {

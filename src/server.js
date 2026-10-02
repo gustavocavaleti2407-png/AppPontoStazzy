@@ -7,6 +7,7 @@ const bcrypt = require('bcryptjs');
 const { db, init, getSettings, DEFAULT_SETTINGS } = require('./db');
 const { computeReport, localDay, localIso, hhmm, timeOf } = require('./rules');
 const { notify, sendEmail, emailConfigured } = require('./mailer');
+const { vacationSummary, validateRequest } = require('./vacations');
 const { buildPdf, buildXlsx, buildOccurrencesPdf, buildOccurrencesXlsx } = require('./export');
 
 const app = express();
@@ -48,7 +49,7 @@ function adminOnly(req, res, next) {
 function publicUser(u) {
   return { id: u.id, name: u.name, login: u.login, role: u.role, work_days: u.work_days,
     start_time: u.start_time, end_time: u.end_time, break_minutes: u.break_minutes,
-    sat_start: u.sat_start, sat_end: u.sat_end, active: !!u.active };
+    sat_start: u.sat_start, sat_end: u.sat_end, hire_date: u.hire_date || null, active: !!u.active };
 }
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -183,6 +184,7 @@ function validateEmployee(b, isNew) {
   }
   if (b.password && String(b.password).length < 6) return 'A senha precisa de pelo menos 6 caracteres';
   if (b.work_days && !/^[0-6](,[0-6])*$/.test(b.work_days)) return 'Dias de trabalho inválidos';
+  if (b.hire_date && !DAY_RE.test(b.hire_date)) return 'Data de admissão inválida';
   return null;
 }
 
@@ -194,11 +196,11 @@ app.post('/api/employees', auth, adminOnly, async (req, res) => {
   if (active >= Number(process.env.MAX_USERS || 11)) return res.status(400).json({ error: 'Limite de usuários atingido' });
   try {
     const u = await db.get(
-      `INSERT INTO employees (name, login, password_hash, role, work_days, start_time, end_time, break_minutes, sat_start, sat_end)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO employees (name, login, password_hash, role, work_days, start_time, end_time, break_minutes, sat_start, sat_end, hire_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       [String(b.name).trim(), String(b.login).trim().toLowerCase(), bcrypt.hashSync(String(b.password), 10),
         b.role === 'admin' ? 'admin' : 'employee', b.work_days || '1,2,3,4,5',
-        b.start_time || '08:00', b.end_time || '17:00', Number(b.break_minutes ?? 60), b.sat_start || '08:00', b.sat_end || '12:00']);
+        b.start_time || '08:00', b.end_time || '17:00', Number(b.break_minutes ?? 60), b.sat_start || '08:00', b.sat_end || '12:00', b.hire_date || null]);
     res.json(publicUser(u));
   } catch (e) {
     if (/UNIQUE|duplicate key/i.test(e.message)) return res.status(400).json({ error: 'Esse login já existe' });
@@ -217,9 +219,10 @@ app.put('/api/employees/:id', auth, adminOnly, async (req, res) => {
     return res.status(400).json({ error: 'Você não pode desativar ou rebaixar a própria conta' });
   }
   await db.run(`UPDATE employees SET name = ?, role = ?, work_days = ?, start_time = ?, end_time = ?, break_minutes = ?,
-      sat_start = ?, sat_end = ?, active = ? WHERE id = ?`,
+      sat_start = ?, sat_end = ?, hire_date = ?, active = ? WHERE id = ?`,
     [b.name ?? u.name, b.role ?? u.role, b.work_days ?? u.work_days, b.start_time ?? u.start_time, b.end_time ?? u.end_time,
       Number(b.break_minutes ?? u.break_minutes), b.sat_start ?? u.sat_start, b.sat_end ?? u.sat_end,
+      b.hire_date === undefined ? u.hire_date : (b.hire_date || null),
       b.active === undefined ? u.active : (b.active ? 1 : 0), id]);
   if (b.password) await db.run('UPDATE employees SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(String(b.password), 10), id]);
   if (b.active === false) await db.run('DELETE FROM sessions WHERE employee_id = ?', [id]);
@@ -348,6 +351,88 @@ async function reviewCorrection(req, approve) {
 app.post('/api/corrections/:id/approve', auth, adminOnly, async (req, res) => { await reviewCorrection(req, true); res.json({ ok: true }); });
 app.post('/api/corrections/:id/reject', auth, adminOnly, async (req, res) => { await reviewCorrection(req, false); res.json({ ok: true }); });
 
+// ---------- férias (saldo, pedidos com venda de dias e aprovação do admin) ----------
+app.get('/api/vacations/summary', auth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.json([await vacationSummary(req.user)]);
+  const emps = await db.all("SELECT * FROM employees WHERE active = 1 AND role = 'employee' ORDER BY name");
+  const out = [];
+  for (const e of emps) out.push(await vacationSummary(e));
+  res.json(out);
+});
+
+app.get('/api/vacations/requests', auth, async (req, res) => {
+  const admin = req.user.role === 'admin';
+  const where = [], params = [];
+  if (!admin) { where.push('v.employee_id = ?'); params.push(req.user.id); }
+  else if (req.query.employee_id) { where.push('v.employee_id = ?'); params.push(Number(req.query.employee_id)); }
+  if (req.query.status) { where.push('v.status = ?'); params.push(String(req.query.status)); }
+  res.json(await db.all(
+    `SELECT v.*, e.name AS employee_name, r.name AS reviewer_name FROM vacation_requests v
+     JOIN employees e ON e.id = v.employee_id LEFT JOIN employees r ON r.id = v.reviewed_by
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY v.id DESC LIMIT 200`, params));
+});
+
+function vacationText(v) {
+  const parts = [];
+  if (v.days) parts.push(`${v.days} dias de descanso, de ${br(v.start_day)} a ${br(v.end_day)}`);
+  if (v.sell_days) parts.push(`venda de ${v.sell_days} dias`);
+  return parts.join(' e ');
+}
+
+// Funcionário pede para si (fica pendente); admin pode lançar férias de alguém já aprovadas.
+app.post('/api/vacations/requests', auth, async (req, res) => {
+  const b = req.body || {};
+  const admin = req.user.role === 'admin' && b.employee_id;
+  const emp = admin ? await db.get('SELECT * FROM employees WHERE id = ?', [Number(b.employee_id)]) : req.user;
+  if (!emp) return res.status(404).json({ error: 'Funcionário não encontrado' });
+  const { days, sell } = await validateRequest(emp, b, { isAdmin: !!admin });
+  const v = await db.get(
+    `INSERT INTO vacation_requests (employee_id, start_day, end_day, days, sell_days, note, status, created_by, reviewed_by, reviewed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    [emp.id, days ? b.start_day : null, days ? b.end_day : null, days, sell, b.note ? String(b.note) : null,
+      admin ? 'aprovado' : 'pendente', req.user.id, admin ? req.user.id : null, admin ? localIso(new Date()) : null]);
+  if (!admin) {
+    notify(`Férias: ${emp.name} enviou um pedido para aprovação`,
+      [`${emp.name} pediu ${vacationText(v)}.`, ...(v.note ? [`Observação: ${v.note}`] : []),
+        'Aprove ou recuse na aba Férias do app.']);
+  }
+  res.json(v);
+});
+
+async function reviewVacation(req, approve) {
+  const v = await db.get("SELECT * FROM vacation_requests WHERE id = ? AND status = 'pendente'", [Number(req.params.id)]);
+  if (!v) throw Object.assign(new Error('Pedido não encontrado ou já analisado'), { status: 404 });
+  await db.run('UPDATE vacation_requests SET status = ?, reviewed_by = ?, review_note = ?, reviewed_at = ? WHERE id = ?',
+    [approve ? 'aprovado' : 'recusado', req.user.id, req.body?.note || null, localIso(new Date()), v.id]);
+}
+
+app.post('/api/vacations/requests/:id/approve', auth, adminOnly, async (req, res) => { await reviewVacation(req, true); res.json({ ok: true }); });
+app.post('/api/vacations/requests/:id/reject', auth, adminOnly, async (req, res) => { await reviewVacation(req, false); res.json({ ok: true }); });
+
+// Funcionário cancela o próprio pedido pendente; admin cancela qualquer pedido (o saldo volta).
+app.delete('/api/vacations/requests/:id', auth, async (req, res) => {
+  const id = Number(req.params.id);
+  if (req.user.role === 'admin') {
+    await db.run("UPDATE vacation_requests SET status = 'cancelado', reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status IN ('pendente', 'aprovado')",
+      [req.user.id, localIso(new Date()), id]);
+  } else {
+    await db.run("DELETE FROM vacation_requests WHERE id = ? AND employee_id = ? AND status = 'pendente'", [id, req.user.id]);
+  }
+  res.json({ ok: true });
+});
+
+// Ajuste manual de saldo (ex.: férias tiradas antes de usar o app, dias de saldo combinados).
+app.post('/api/vacations/adjustments', auth, adminOnly, async (req, res) => {
+  const { employee_id, days, reason } = req.body || {};
+  const n = Number(days);
+  if (!Number.isInteger(n) || n === 0 || Math.abs(n) > 120) return res.status(400).json({ error: 'Informe os dias (positivo soma, negativo desconta)' });
+  if (!reason) return res.status(400).json({ error: 'Explique o motivo do ajuste' });
+  if (!await db.get('SELECT id FROM employees WHERE id = ?', [Number(employee_id)])) return res.status(404).json({ error: 'Funcionário não encontrado' });
+  await db.run('INSERT INTO vacation_adjustments (employee_id, days, reason, created_by) VALUES (?, ?, ?, ?)',
+    [Number(employee_id), n, String(reason), req.user.id]);
+  res.json({ ok: true });
+});
+
 // ---------- jornadas especiais (entrada/saída diferente da padrão em dias específicos) ----------
 app.get('/api/exceptions', auth, adminOnly, async (req, res) => {
   const { from, to } = period(req);
@@ -403,7 +488,7 @@ async function occurrencesFor(req) {
   const rows = [];
   for (const r of reports) {
     for (const d of r.days) {
-      if (d.alerts.length || d.notes.length || d.special) rows.push({ employee: r.employee, ...d });
+      if (d.alerts.length || d.notes.length || (d.special && !d.vacation)) rows.push({ employee: r.employee, ...d });
     }
   }
   rows.sort((a, b) => a.day.localeCompare(b.day) || a.employee.name.localeCompare(b.employee.name));
