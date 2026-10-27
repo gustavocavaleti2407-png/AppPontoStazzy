@@ -81,6 +81,17 @@ function scheduleFor(emp, day, holidays, exceptions) {
 }
 
 /**
+ * Dia a partir do qual o ponto do funcionário é contabilizado: o que o admin informou no cadastro
+ * ou, se vazio, o mais tarde entre a data de admissão e o dia do cadastro no app.
+ * Antes desse dia não há jornada prevista (nem falta ou débito).
+ */
+function trackingStart(emp) {
+  if (emp.tracking_start) return emp.tracking_start;
+  const created = emp.created_at ? localDay(new Date(String(emp.created_at).replace(' ', 'T') + 'Z')) : '';
+  return emp.hire_date && emp.hire_date > created ? emp.hire_date : created;
+}
+
+/**
  * Calcula um dia de trabalho a partir das marcações.
  * Marcações são pareadas em ordem: entrada, saída, entrada, saída...
  */
@@ -89,7 +100,9 @@ function computeDay(emp, day, punches, prevLastPunch, holidays, s, exceptions, n
   const wd = new Date(`${day}T12:00:00`).getDay();
   const isHoliday = !!holidays[day];
   const isSundayOrHoliday = wd === 0 || isHoliday;
-  const sched = scheduleFor(emp, day, holidays, exceptions);
+  const sched = emp.trackingStart && day < emp.trackingStart
+    ? { expected: 0, start: null, end: null }
+    : scheduleFor(emp, day, holidays, exceptions);
   const expected = sched.expected;
   const dayNotes = notes.filter(n => n.day === day);
   const excused = dayNotes.some(n => n.excused);
@@ -197,6 +210,9 @@ async function computeReport(employeeId, from, to) {
   const s = await getSettings();
   const emp = await db.get('SELECT * FROM employees WHERE id = ?', [employeeId]);
   if (!emp) throw Object.assign(new Error('Funcionário não encontrado'), { status: 404 });
+  // O espelho começa no dia em que o ponto passou a ser contabilizado para o funcionário.
+  emp.trackingStart = trackingStart(emp);
+  if (emp.trackingStart > from && emp.trackingStart <= to) from = emp.trackingStart;
   const holidays = await holidayMap();
   const exceptions = await db.all(
     'SELECT * FROM schedule_exceptions WHERE day BETWEEN ? AND ? AND (employee_id = ? OR employee_id IS NULL) ORDER BY id DESC',
@@ -250,4 +266,4 @@ async function computeReport(employeeId, from, to) {
   };
 }
 
-module.exports = { computeReport, localDay, localIso, hhmm, eachDay, timeOf };
+module.exports = { computeReport, trackingStart, localDay, localIso, hhmm, eachDay, timeOf };

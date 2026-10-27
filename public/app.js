@@ -250,9 +250,10 @@ async function loadPanel() {
 async function loadEmployees() {
   employees = await api('/api/employees');
   $('#employees').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Nome</th><th>Login</th><th>Perfil</th>
-    <th>Jornada</th><th>Dias</th><th>Situação</th><th></th></tr></thead><tbody>${employees.map(e => `<tr>
+    <th>Jornada</th><th>Dias</th><th>Ponto desde</th><th>Situação</th><th></th></tr></thead><tbody>${employees.map(e => `<tr>
     <td>${esc(e.name)}</td><td>${esc(e.login)}</td><td>${e.role === 'admin' ? 'Admin' : 'Funcionário'}</td>
     <td class="num">${e.start_time}–${e.end_time}${e.break_minutes ? ` (interv. ${e.break_minutes} min)` : ''}</td><td>${e.work_days.split(',').map(d => DAYS[d]).join(' ')}</td>
+    <td class="num">${e.tracking_start_effective ? br(e.tracking_start_effective) : ''}</td>
     <td>${e.active ? 'Ativo' : 'Inativo'}</td><td><button class="link" data-edit="${e.id}">Editar</button></td></tr>`).join('')}
     </tbody></table></div><br>`;
   document.querySelectorAll('[data-edit]').forEach(b =>
@@ -269,6 +270,8 @@ function employeeForm(e) {
     <label>Login<input name="login" value="${esc(e.login)}" ${isNew ? 'required' : 'disabled'} autocapitalize="none"></label>
     <label>${isNew ? 'Senha' : 'Nova senha (deixe vazio para manter)'}<input name="password" type="password" minlength="6" ${isNew ? 'required' : ''}></label>
     <label>Data de admissão (para calcular as férias)<input name="hire_date" type="date" value="${e.hire_date || ''}"></label>
+    <label>Contar o ponto a partir de<input name="tracking_start" type="date" value="${e.tracking_start || e.tracking_start_effective || ''}">
+      <span class="muted">Antes desse dia não conta falta nem débito. Se ficar vazio, vale a data de admissão ou o dia do cadastro (o que for mais recente).</span></label>
     <label>Perfil<select name="role"><option value="employee">Funcionário</option><option value="admin" ${e.role === 'admin' ? 'selected' : ''}>Administrador</option></select></label>
     <div class="two-cols"><label>Entrada padrão<input name="start_time" type="time" value="${e.start_time}" required></label>
       <label>Saída padrão<input name="end_time" type="time" value="${e.end_time}" required></label></div>
@@ -284,6 +287,7 @@ function employeeForm(e) {
       name: f.get('name'), role: f.get('role'), work_days: f.getAll('wd').join(',') || '1,2,3,4,5',
       start_time: f.get('start_time'), end_time: f.get('end_time'), break_minutes: Number(f.get('break_minutes') || 0),
       sat_start: f.get('sat_start') || '08:00', sat_end: f.get('sat_end') || '12:00', hire_date: f.get('hire_date') || null,
+      tracking_start: f.get('tracking_start') || null,
     };
     if (f.get('password')) body.password = f.get('password');
     if (isNew) { body.login = f.get('login'); await api('/api/employees', { method: 'POST', body }); }
