@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const { db, init, getSettings, DEFAULT_SETTINGS } = require('./db');
-const { computeReport, localDay, localIso, hhmm, timeOf } = require('./rules');
+const { computeReport, trackingStart, localDay, localIso, hhmm, timeOf } = require('./rules');
 const { notify, sendEmail, emailConfigured } = require('./mailer');
 const { vacationSummary, validateRequest } = require('./vacations');
 const { buildPdf, buildXlsx, buildOccurrencesPdf, buildOccurrencesXlsx } = require('./export');
@@ -49,7 +49,8 @@ function adminOnly(req, res, next) {
 function publicUser(u) {
   return { id: u.id, name: u.name, login: u.login, role: u.role, work_days: u.work_days,
     start_time: u.start_time, end_time: u.end_time, break_minutes: u.break_minutes,
-    sat_start: u.sat_start, sat_end: u.sat_end, hire_date: u.hire_date || null, active: !!u.active };
+    sat_start: u.sat_start, sat_end: u.sat_end, hire_date: u.hire_date || null,
+    tracking_start: u.tracking_start || null, tracking_start_effective: trackingStart(u), active: !!u.active };
 }
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -185,6 +186,7 @@ function validateEmployee(b, isNew) {
   if (b.password && String(b.password).length < 6) return 'A senha precisa de pelo menos 6 caracteres';
   if (b.work_days && !/^[0-6](,[0-6])*$/.test(b.work_days)) return 'Dias de trabalho inválidos';
   if (b.hire_date && !DAY_RE.test(b.hire_date)) return 'Data de admissão inválida';
+  if (b.tracking_start && !DAY_RE.test(b.tracking_start)) return 'Data de início do ponto inválida';
   return null;
 }
 
@@ -196,11 +198,12 @@ app.post('/api/employees', auth, adminOnly, async (req, res) => {
   if (active >= Number(process.env.MAX_USERS || 11)) return res.status(400).json({ error: 'Limite de usuários atingido' });
   try {
     const u = await db.get(
-      `INSERT INTO employees (name, login, password_hash, role, work_days, start_time, end_time, break_minutes, sat_start, sat_end, hire_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO employees (name, login, password_hash, role, work_days, start_time, end_time, break_minutes, sat_start, sat_end, hire_date, tracking_start)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       [String(b.name).trim(), String(b.login).trim().toLowerCase(), bcrypt.hashSync(String(b.password), 10),
         b.role === 'admin' ? 'admin' : 'employee', b.work_days || '1,2,3,4,5',
-        b.start_time || '08:00', b.end_time || '17:00', Number(b.break_minutes ?? 60), b.sat_start || '08:00', b.sat_end || '12:00', b.hire_date || null]);
+        b.start_time || '08:00', b.end_time || '17:00', Number(b.break_minutes ?? 60), b.sat_start || '08:00', b.sat_end || '12:00', b.hire_date || null,
+        b.tracking_start || null]);
     res.json(publicUser(u));
   } catch (e) {
     if (/UNIQUE|duplicate key/i.test(e.message)) return res.status(400).json({ error: 'Esse login já existe' });
@@ -219,10 +222,11 @@ app.put('/api/employees/:id', auth, adminOnly, async (req, res) => {
     return res.status(400).json({ error: 'Você não pode desativar ou rebaixar a própria conta' });
   }
   await db.run(`UPDATE employees SET name = ?, role = ?, work_days = ?, start_time = ?, end_time = ?, break_minutes = ?,
-      sat_start = ?, sat_end = ?, hire_date = ?, active = ? WHERE id = ?`,
+      sat_start = ?, sat_end = ?, hire_date = ?, tracking_start = ?, active = ? WHERE id = ?`,
     [b.name ?? u.name, b.role ?? u.role, b.work_days ?? u.work_days, b.start_time ?? u.start_time, b.end_time ?? u.end_time,
       Number(b.break_minutes ?? u.break_minutes), b.sat_start ?? u.sat_start, b.sat_end ?? u.sat_end,
       b.hire_date === undefined ? u.hire_date : (b.hire_date || null),
+      b.tracking_start === undefined ? u.tracking_start : (b.tracking_start || null),
       b.active === undefined ? u.active : (b.active ? 1 : 0), id]);
   if (b.password) await db.run('UPDATE employees SET password_hash = ? WHERE id = ?', [bcrypt.hashSync(String(b.password), 10), id]);
   if (b.active === false) await db.run('DELETE FROM sessions WHERE employee_id = ?', [id]);

@@ -139,6 +139,7 @@ const NEW_COLUMNS = [
   ['employees', 'sat_start', "TEXT NOT NULL DEFAULT '08:00'"],
   ['employees', 'sat_end', "TEXT NOT NULL DEFAULT '12:00'"],
   ['employees', 'hire_date', 'TEXT'],
+  ['employees', 'tracking_start', 'TEXT'],   // dia a partir do qual o ponto é contabilizado
 ];
 
 let db;
