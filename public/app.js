@@ -10,12 +10,29 @@ const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 let me = null;
 let employees = [];
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Na hospedagem gratuita o servidor "dorme" quando ninguém usa e leva até ~1 minuto para acordar.
+// Nesse tempo a conexão pode falhar ("Failed to fetch") ou voltar 502/503: tentamos de novo por até 90 s.
+// Só repete leituras e o login, para nunca registrar um ponto duas vezes.
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+  let res;
+  const retry = path === '/api/login' || ((!opts.method || opts.method === 'GET') && path !== '/api/me');
+  const deadline = Date.now() + (retry ? 90000 : 0);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      res = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      if (![502, 503, 504].includes(res.status) || Date.now() >= deadline) break;
+    } catch (err) {
+      if (Date.now() >= deadline) throw new Error('Sem conexão com o servidor. Verifique a internet e tente de novo.');
+    }
+    if (opts.onWait) opts.onWait(attempt);
+    await sleep(Math.min(2000 + attempt * 1000, 5000));
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && path !== '/api/login') { showLogin(); throw new Error(data.error); }
   if (!res.ok) throw new Error(data.error || 'Erro');
@@ -32,7 +49,14 @@ $('#login-form').addEventListener('submit', async e => {
   e.preventDefault();
   const f = new FormData(e.target);
   try {
-    me = await api('/api/login', { method: 'POST', body: { login: f.get('login'), password: f.get('password') } });
+    const btn = e.target.querySelector('button[type=submit], button');
+    if (btn) btn.disabled = true;
+    $('#login-error').textContent = '';
+    try {
+      me = await api('/api/login', { method: 'POST', body: { login: f.get('login'), password: f.get('password') },
+        onWait: () => { $('#login-error').textContent = 'Conectando ao servidor, aguarde alguns segundos...'; } });
+    } finally { if (btn) btn.disabled = false; }
+    $('#login-error').textContent = '';
     e.target.reset();
     start();
   } catch (err) { $('#login-error').textContent = err.message; }

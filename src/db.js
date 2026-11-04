@@ -150,7 +150,13 @@ if (usePg) {
     connectionString: process.env.DATABASE_URL,
     ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : { rejectUnauthorized: false },
     max: 5,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 15000,
+    keepAlive: true,
   });
+  // O Neon gratuito desliga o banco após alguns minutos sem uso e derruba as conexões abertas.
+  // Sem este tratamento, o erro de uma conexão ociosa derrubava o servidor inteiro.
+  pool.on('error', e => console.error('Conexão com o banco encerrada (será reaberta):', e.message));
   const toPg = sql => { let i = 0; return sql.replace(/\?/g, () => `$${++i}`); };
   db = {
     kind: 'postgres',

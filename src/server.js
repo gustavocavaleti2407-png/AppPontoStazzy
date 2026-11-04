@@ -576,6 +576,9 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.status ? err.message : 'Erro interno' });
 });
 
+// Um erro inesperado fica registrado no log, mas não derruba o app para todos os funcionários.
+process.on('unhandledRejection', e => console.error('Erro não tratado:', e));
+
 const PORT = Number(process.env.PORT) || 3000;
 init().then(() => app.listen(PORT, () => console.log(`Ponto rodando em http://localhost:${PORT}`)))
   .catch(e => { console.error('Falha ao iniciar o banco de dados:', e); process.exit(1); });
