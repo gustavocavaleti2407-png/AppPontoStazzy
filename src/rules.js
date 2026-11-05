@@ -156,20 +156,19 @@ function computeDay(emp, day, punches, prevLastPunch, holidays, s, exceptions, n
     alerts.push(`Hora extra acima do limite diário (${hhmm(Number(s.max_daily_overtime))})`);
   }
 
-  // Intervalo intrajornada (art. 71).
+  // Intervalo intrajornada (art. 71). O intervalo curto não vira ocorrência (pedido do
+  // Gustavo); continua somando em "Intervalo suprimido" no resumo do relatório.
   let breakMissing = 0;
   if (worked > 360) {
     const min = Number(s.min_break_long);
     if (breakTotal < min) {
       breakMissing = min - breakTotal;
-      alerts.push(`Intervalo insuficiente: ${hhmm(breakTotal)} de ${hhmm(min)} obrigatórios`);
     }
     if (breakTotal > 120) alerts.push('Intervalo acima de 2h');
   } else if (worked > 240) {
     const min = Number(s.min_break_short);
     if (breakTotal < min) {
       breakMissing = min - breakTotal;
-      alerts.push(`Intervalo insuficiente: ${hhmm(breakTotal)} de ${hhmm(min)} obrigatórios`);
     }
   }
 
